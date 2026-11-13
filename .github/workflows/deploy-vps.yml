@@ -1,0 +1,92 @@
+name: Deploy to VPS (Dokploy)
+
+# Reemplaza el deploy a Render (API) + Vercel (web):
+#   1. verify — mismo gate que ci.yml: build+vet del backend Go, lint+typecheck
+#      +build del frontend. Si algo no compila, NO se despliega nada.
+#   2. deploy — pide a Dokploy que reconstruya y redespliegue daas-api y
+#      daas-web desde este mismo commit.
+#
+# La base de datos (Supabase cloud) NO se toca acá — sigue migrando igual que
+# siempre (golang-migrate / Supabase MCP), por eso este workflow no tiene paso
+# de backup ni de migración.
+#
+# ── Secrets requeridos (Settings → Secrets and variables → Actions) ──
+#   DOKPLOY_URL      base del panel Dokploy, ej. https://dokploy.<ip-con-guiones>.sslip.io
+#   DOKPLOY_API_KEY  API key de Dokploy (Settings → Profile → API/CLI)
+#
+# ── Trigger ──
+# Push a `main` (igual que el auto-deploy de Render/Vercel de hoy). También se
+# puede lanzar a mano.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-vps
+  cancel-in-progress: false
+
+env:
+  # IDs de las aplicaciones en Dokploy. Completar una vez creadas (no son
+  # secretas, son solo identificadores internos de Dokploy).
+  DAAS_API_APP_ID: "TODO-reemplazar-tras-crear-la-app-en-dokploy"
+  DAAS_WEB_APP_ID: "TODO-reemplazar-tras-crear-la-app-en-dokploy"
+
+jobs:
+  verify:
+    name: Verify (build + typecheck)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+      - name: Lint + typecheck web
+        run: |
+          pnpm --filter @daas/web lint
+          pnpm --filter @daas/web typecheck
+      - name: Build web
+        run: pnpm --filter @daas/web build
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: apps/api/go.sum
+      - name: Build + vet API
+        working-directory: apps/api
+        run: |
+          go build ./...
+          go vet ./...
+
+  deploy:
+    name: Deploy (Dokploy)
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Dokploy deploys
+        env:
+          DOKPLOY_URL: ${{ secrets.DOKPLOY_URL }}
+          DOKPLOY_API_KEY: ${{ secrets.DOKPLOY_API_KEY }}
+        run: |
+          set -euo pipefail
+          for v in DOKPLOY_URL DOKPLOY_API_KEY; do
+            if [ -z "${!v:-}" ]; then
+              echo "::error::Falta el secret $v. Cargalo con: gh secret set $v"; exit 1
+            fi
+          done
+          for id in "$DAAS_API_APP_ID" "$DAAS_WEB_APP_ID"; do
+            if [[ "$id" == TODO-* ]]; then
+              echo "::error::Falta reemplazar el applicationId placeholder en env: de este workflow"; exit 1
+            fi
+            curl -fsS -X POST "$DOKPLOY_URL/api/application.deploy" \
+              -H "x-api-key: $DOKPLOY_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d "{\"applicationId\":\"$id\",\"title\":\"GitHub ${GITHUB_SHA::7}\"}" >/dev/null
+            echo "Deploy lanzado para $id"
+          done

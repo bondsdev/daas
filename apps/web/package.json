@@ -2,6 +2,7 @@
   "name": "@daas/web",
   "version": "0.0.1",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "nuxt dev",
     "build": "nuxt build",
@@ -12,9 +13,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "cap:sync": "NUXT_PUBLIC_API_BASE=https://daas-l36f.onrender.com NUXT_CAPACITOR=true nuxt generate && npx cap sync",
-    "cap:ios": "NUXT_PUBLIC_API_BASE=https://daas-l36f.onrender.com NUXT_CAPACITOR=true nuxt generate && npx cap sync ios && npx cap open ios",
-    "cap:android": "NUXT_PUBLIC_API_BASE=https://daas-l36f.onrender.com NUXT_CAPACITOR=true nuxt generate && npx cap sync android && npx cap open android"
+    "cap:sync": "NUXT_PUBLIC_API_BASE=https://daas-api.77-237-235-159.sslip.io NUXT_CAPACITOR=true nuxt generate && npx cap sync",
+    "cap:ios": "NUXT_PUBLIC_API_BASE=https://daas-api.77-237-235-159.sslip.io NUXT_CAPACITOR=true nuxt generate && npx cap sync ios && npx cap open ios",
+    "cap:android": "NUXT_PUBLIC_API_BASE=https://daas-api.77-237-235-159.sslip.io NUXT_CAPACITOR=true nuxt generate && npx cap sync android && npx cap open android"
   },
   "dependencies": {
     "@capacitor/android": "^8.4.0",

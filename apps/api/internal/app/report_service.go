@@ -273,6 +273,58 @@ func (s *ReportService) CashSessionSummary(ctx context.Context, tenantID, sessio
 	return sum, nil
 }
 
+// SalesBook returns the libro de ventas: every issued sales document in the
+// period, from internal (non-fiscal) and fiscal invoices combined, since the
+// accountant needs everything in one place regardless of document type.
+func (s *ReportService) SalesBook(ctx context.Context, tenantID uuid.UUID, dr report.DateRange) (*report.SalesBookSummary, error) {
+	sum := &report.SalesBookSummary{
+		From:    dr.From,
+		To:      dr.To,
+		Entries: []report.SalesBookEntry{},
+	}
+
+	// internal_invoices has no explicit tax_base/tax_amount columns — it's a
+	// non-fiscal flat-total "comprobante interno" (VES dropped mandatory
+	// electronic invoicing), so tax_base = total and tax_amount = 0 for those.
+	// fiscal_invoices carries the real IVA breakdown, used as-is.
+	rows, err := s.pool.Query(ctx,
+		`SELECT issued_at, 'internal' AS doc_type, correlative,
+		        customer_name, customer_id_number, total AS tax_base, 0 AS tax_amount, total
+		 FROM internal_invoices
+		 WHERE tenant_id=$1 AND status='issued' AND issued_at>=$2 AND issued_at<=$3
+		 UNION ALL
+		 SELECT issued_at, 'fiscal' AS doc_type, COALESCE(fiscal_number,''),
+		        customer_name, customer_id_number, subtotal_base, tax_amount, total
+		 FROM fiscal_invoices
+		 WHERE tenant_id=$1 AND status='issued' AND issued_at>=$2 AND issued_at<=$3
+		 ORDER BY issued_at DESC`,
+		tenantID, dr.From, dr.To,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var e report.SalesBookEntry
+		var d time.Time
+		if err := rows.Scan(&d, &e.DocumentType, &e.DocumentNumber,
+			&e.CustomerName, &e.CustomerIDNumber, &e.TaxBase, &e.TaxAmount, &e.Total); err != nil {
+			return nil, err
+		}
+		e.Date = d
+		sum.TotalTaxBase += e.TaxBase
+		sum.TotalTaxDebit += e.TaxAmount
+		sum.TotalRevenue += e.Total
+		sum.Entries = append(sum.Entries, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	sum.DocumentCount = len(sum.Entries)
+
+	return sum, nil
+}
+
 // PurchaseReport returns purchase order aggregates for the given period.
 func (s *ReportService) PurchaseReport(ctx context.Context, tenantID uuid.UUID, dr report.DateRange) (*report.PurchaseSummary, error) {
 	sum := &report.PurchaseSummary{

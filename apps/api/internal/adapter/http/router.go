@@ -329,6 +329,7 @@ func registerRoutes(
 	api.GET("/reports/sales", reportHandler.SalesReport)
 	api.GET("/reports/inventory", reportHandler.InventoryReport)
 	api.GET("/reports/purchases", reportHandler.PurchaseReport)
+	api.GET("/reports/sales-book", reportHandler.SalesBook)
 
 	// Reports — CSV export
 	api.GET("/reports/sales/export", reportHandler.ExportSalesCSV)

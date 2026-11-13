@@ -91,6 +91,21 @@ func (h *ReportHandler) PurchaseReport(c echo.Context) error {
 	return c.JSON(http.StatusOK, result)
 }
 
+// SalesBook godoc
+// GET /api/v1/reports/sales-book?from=YYYY-MM-DD&to=YYYY-MM-DD
+func (h *ReportHandler) SalesBook(c echo.Context) error {
+	tenantID, err := getTenantID(c)
+	if err != nil {
+		return WriteProblem(c, http.StatusForbidden, "forbidden", "tenant context missing")
+	}
+	dr := parseDateRange(c)
+	result, err := h.svc.SalesBook(c.Request().Context(), tenantID, dr)
+	if err != nil {
+		return WriteProblem(c, http.StatusInternalServerError, "internal-error", err.Error())
+	}
+	return c.JSON(http.StatusOK, result)
+}
+
 // CashSessionSummary godoc
 // GET /api/v1/cash-sessions/:id/summary
 func (h *ReportHandler) CashSessionSummary(c echo.Context) error {

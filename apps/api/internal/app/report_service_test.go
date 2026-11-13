@@ -5,11 +5,13 @@ import (
 	"errors"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/danzt/daas/api/internal/domain/cashsession"
+	"github.com/danzt/daas/api/internal/domain/report"
 )
 
 // setupReportTest connects to TEST_DATABASE_URL and seeds a tenant, user, and
@@ -94,6 +96,62 @@ func TestReportService_CashSessionSummary(t *testing.T) {
 	}
 	if sum.InventoryRemaining == nil {
 		t.Error("expected InventoryRemaining to be populated")
+	}
+}
+
+func TestReportService_SalesBook(t *testing.T) {
+	pool, tenantID, _ := setupReportTest(t, 40.0)
+	ctx := context.Background()
+
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO internal_invoices (tenant_id, status, subtotal, total, correlative, customer_name, customer_id_number, issued_at)
+		 VALUES ($1,'issued',100,100,'INT-2026-00001','Cliente Mostrador','V-1', now())`,
+		tenantID,
+	); err != nil {
+		t.Fatalf("insert internal invoice: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO fiscal_invoices (tenant_id, status, subtotal_base, tax_amount, total, fiscal_number, customer_name, customer_id_number, issued_at)
+		 VALUES ($1,'issued',200,32,232,'FIS-00001','Cliente Fiscal','J-1', now())`,
+		tenantID,
+	); err != nil {
+		t.Fatalf("insert fiscal invoice: %v", err)
+	}
+
+	dr := report.DateRange{From: time.Now().Add(-24 * time.Hour), To: time.Now().Add(24 * time.Hour)}
+	svc := NewReportService(pool)
+	sum, err := svc.SalesBook(ctx, tenantID, dr)
+	if err != nil {
+		t.Fatalf("SalesBook: %v", err)
+	}
+
+	if sum.DocumentCount != 2 {
+		t.Fatalf("expected 2 documents, got %d: %+v", sum.DocumentCount, sum.Entries)
+	}
+	if sum.TotalRevenue != 332 {
+		t.Errorf("expected total revenue 332, got %v", sum.TotalRevenue)
+	}
+	if sum.TotalTaxBase != 300 {
+		t.Errorf("expected total tax base 300, got %v", sum.TotalTaxBase)
+	}
+	if sum.TotalTaxDebit != 32 {
+		t.Errorf("expected total tax debit 32, got %v", sum.TotalTaxDebit)
+	}
+
+	var internalEntry, fiscalEntry *report.SalesBookEntry
+	for i := range sum.Entries {
+		switch sum.Entries[i].DocumentType {
+		case "internal":
+			internalEntry = &sum.Entries[i]
+		case "fiscal":
+			fiscalEntry = &sum.Entries[i]
+		}
+	}
+	if internalEntry == nil || internalEntry.TaxBase != 100 || internalEntry.TaxAmount != 0 {
+		t.Errorf("unexpected internal entry: %+v", internalEntry)
+	}
+	if fiscalEntry == nil || fiscalEntry.TaxBase != 200 || fiscalEntry.TaxAmount != 32 {
+		t.Errorf("unexpected fiscal entry: %+v", fiscalEntry)
 	}
 }
 

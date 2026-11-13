@@ -382,6 +382,7 @@ func registerRoutes(
 	api.POST("/cash-sessions/open", cashSessionHandler.Open)
 	api.POST("/cash-sessions/close", cashSessionHandler.Close)
 	api.GET("/cash-sessions/open", cashSessionHandler.GetOpen)
+	api.GET("/cash-sessions/:id/summary", reportHandler.CashSessionSummary)
 
 	// POS quick-sale — counter sale tied to the tenant's open cash session.
 	api.POST("/pos/sales", posSaleHandler.Create)

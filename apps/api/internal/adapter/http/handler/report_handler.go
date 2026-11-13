@@ -2,14 +2,17 @@ package handler
 
 import (
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/labstack/echo/v4"
 
 	"github.com/danzt/daas/api/internal/app"
+	"github.com/danzt/daas/api/internal/domain/cashsession"
 	"github.com/danzt/daas/api/internal/domain/report"
 )
 
@@ -83,6 +86,27 @@ func (h *ReportHandler) PurchaseReport(c echo.Context) error {
 	dr := parseDateRange(c)
 	result, err := h.svc.PurchaseReport(c.Request().Context(), tenantID, dr)
 	if err != nil {
+		return WriteProblem(c, http.StatusInternalServerError, "internal-error", err.Error())
+	}
+	return c.JSON(http.StatusOK, result)
+}
+
+// CashSessionSummary godoc
+// GET /api/v1/cash-sessions/:id/summary
+func (h *ReportHandler) CashSessionSummary(c echo.Context) error {
+	tenantID, err := getTenantID(c)
+	if err != nil {
+		return WriteProblem(c, http.StatusForbidden, "forbidden", "tenant context missing")
+	}
+	sessionID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return WriteProblem(c, http.StatusBadRequest, "bad-request", "invalid cash session id")
+	}
+	result, err := h.svc.CashSessionSummary(c.Request().Context(), tenantID, sessionID)
+	if err != nil {
+		if errors.Is(err, cashsession.ErrSessionNotFound) {
+			return WriteProblem(c, http.StatusNotFound, "not-found", err.Error())
+		}
 		return WriteProblem(c, http.StatusInternalServerError, "internal-error", err.Error())
 	}
 	return c.JSON(http.StatusOK, result)

@@ -61,6 +61,28 @@ type StockItem struct {
 	Active         bool    `json:"active"`
 }
 
+// ─── Cash Session Summary ─────────────────────────────────────────────────────
+
+// CashSessionSummary is the cash-register close summary for one session:
+// totals in both currencies, breakdown by payment method, products sold, and
+// the remaining inventory.
+type CashSessionSummary struct {
+	TotalBS            float64              `json:"total_bs"`
+	TotalUSD           float64              `json:"total_usd"`
+	SaleCount          int                  `json:"sale_count"`
+	CustomerCount      int                  `json:"customer_count"`
+	ByPaymentMethod    []PaymentMethodTotal `json:"by_payment_method"`
+	ProductsSold       []ProductRevenue     `json:"products_sold"`
+	InventoryRemaining *InventorySnapshot   `json:"inventory_remaining"`
+}
+
+// PaymentMethodTotal is revenue aggregated by payment method within a cash session.
+type PaymentMethodTotal struct {
+	Method string  `json:"method"`
+	Total  float64 `json:"total"`
+	Count  int     `json:"count"`
+}
+
 // ─── Purchases Report ─────────────────────────────────────────────────────────
 
 // PurchaseSummary aggregates purchase order data over a period.

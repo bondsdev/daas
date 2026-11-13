@@ -24,12 +24,19 @@ type InvoiceListFilters struct {
 
 // InternalInvoiceService handles all internal invoicing use cases.
 type InternalInvoiceService struct {
-	pool *pgxpool.Pool
+	pool           *pgxpool.Pool
+	cashSessionSvc *CashSessionService // optional — required only by CreatePOSSale
 }
 
 // NewInternalInvoiceService creates a service backed by the given pool.
 func NewInternalInvoiceService(pool *pgxpool.Pool) *InternalInvoiceService {
 	return &InternalInvoiceService{pool: pool}
+}
+
+// SetCashSessionService injects the CashSessionService used by CreatePOSSale
+// to require an open cash session. Call once at wiring time.
+func (s *InternalInvoiceService) SetCashSessionService(svc *CashSessionService) {
+	s.cashSessionSvc = svc
 }
 
 // Create validates and persists a new draft invoice with its lines.
@@ -454,7 +461,7 @@ func (s *InternalInvoiceService) deductStock(ctx context.Context, tx pgx.Tx, ten
 		return fmt.Errorf("lock stock: %w", err)
 	}
 	if onHand < qty {
-		return fmt.Errorf("insufficient stock for product %s: have %.3f, need %.3f", productID, onHand, qty)
+		return invoice.ErrInsufficientStock
 	}
 
 	_, err = tx.Exec(ctx,
@@ -742,6 +749,151 @@ func (s *InternalInvoiceService) resolveUserID(ctx context.Context, tenantID uui
 		return uuid.Nil, fmt.Errorf("resolve user: %w", err)
 	}
 	return id, nil
+}
+
+// CreatePOSSale creates and immediately issues an internal invoice for a POS
+// counter sale: requires an open cash session, resolves unit prices from the
+// product catalog (same rule as Create — non-fiscal only, internal_price),
+// and validates + deducts stock atomically in the same transaction as the
+// invoice insert, so a failed sale never partially deducts stock.
+func (s *InternalInvoiceService) CreatePOSSale(ctx context.Context, tenantID uuid.UUID, createdBySupabaseUID string, req invoice.PosSaleRequest) (*invoice.InternalInvoice, error) {
+	if s.cashSessionSvc == nil {
+		return nil, fmt.Errorf("pos sale: cash session service not configured")
+	}
+	if len(req.Lines) == 0 {
+		return nil, invoice.ErrEmptyInvoice
+	}
+
+	createdBy, err := s.resolveUserID(ctx, tenantID, createdBySupabaseUID)
+	if err != nil {
+		return nil, err
+	}
+
+	sess, err := s.cashSessionSvc.GetOpen(ctx, tenantID)
+	if err != nil {
+		return nil, err // propagates cashsession.ErrNoOpenSession
+	}
+
+	currency := req.Currency
+	if currency == "" {
+		currency = "VES"
+	}
+
+	type resolvedLine struct {
+		productID uuid.UUID
+		quantity  float64
+		unitPrice float64
+	}
+	lines := make([]resolvedLine, 0, len(req.Lines))
+	for _, l := range req.Lines {
+		if l.Quantity <= 0 {
+			return nil, fmt.Errorf("quantity must be positive")
+		}
+		var isFiscal bool
+		var internalPrice float64
+		err := s.pool.QueryRow(ctx,
+			`SELECT is_fiscal, COALESCE(internal_price, 0)
+			 FROM products
+			 WHERE id = $1 AND tenant_id = $2 AND active = true`,
+			l.ProductID, tenantID,
+		).Scan(&isFiscal, &internalPrice)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil, fmt.Errorf("product %s not found or inactive", l.ProductID)
+			}
+			return nil, fmt.Errorf("lookup product: %w", err)
+		}
+		if isFiscal {
+			return nil, invoice.ErrFiscalProductForbidden
+		}
+		lines = append(lines, resolvedLine{productID: l.ProductID, quantity: l.Quantity, unitPrice: internalPrice})
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	year := time.Now().Year()
+	seq, err := s.nextCorrelative(ctx, tx, tenantID, year)
+	if err != nil {
+		return nil, fmt.Errorf("generate correlative: %w", err)
+	}
+	correlative := invoice.FormatCorrelative(year, seq)
+	now := time.Now()
+
+	inv := &invoice.InternalInvoice{
+		ID:             uuid.New(),
+		TenantID:       tenantID,
+		Correlative:    correlative,
+		CustomerIDType: invoice.CustomerIDTypeAnonymous,
+		Status:         invoice.StatusIssued,
+		CashSessionID:  &sess.ID,
+		PaymentMethod:  req.PaymentMethod,
+		Currency:       currency,
+		IssuedAt:       &now,
+		CreatedBy:      createdBy,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+
+	_, err = tx.Exec(ctx, `
+		INSERT INTO internal_invoices
+			(id, tenant_id, correlative, customer_id_type, status, subtotal, total,
+			 created_by, created_at, updated_at, issued_at, cash_session_id, payment_method, currency)
+		VALUES ($1,$2,$3,$4,'issued',0,0,$5,$6,$6,$6,$7,$8,$9)`,
+		inv.ID, inv.TenantID, inv.Correlative, inv.CustomerIDType,
+		inv.CreatedBy, now, inv.CashSessionID, inv.PaymentMethod, inv.Currency,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("insert invoice: %w", err)
+	}
+
+	var subtotal float64
+	for i, l := range lines {
+		lineSubtotal := l.quantity * l.unitPrice
+		subtotal += lineSubtotal
+
+		lineID := uuid.New()
+		_, err = tx.Exec(ctx, `
+			INSERT INTO internal_invoice_lines
+				(id, invoice_id, product_id, quantity, unit_price, subtotal, sort_order)
+			VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+			lineID, inv.ID, l.productID, l.quantity, l.unitPrice, lineSubtotal, i,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("insert line: %w", err)
+		}
+		inv.Lines = append(inv.Lines, invoice.InvoiceLine{
+			ID:        lineID,
+			InvoiceID: inv.ID,
+			ProductID: l.productID,
+			Quantity:  l.quantity,
+			UnitPrice: l.unitPrice,
+			Subtotal:  lineSubtotal,
+			SortOrder: i,
+		})
+
+		if err := s.deductStock(ctx, tx, tenantID, l.productID, l.quantity, inv.ID, createdBy); err != nil {
+			return nil, err
+		}
+	}
+
+	inv.Subtotal = subtotal
+	inv.Total = subtotal
+	_, err = tx.Exec(ctx,
+		`UPDATE internal_invoices SET subtotal=$1, total=$2 WHERE id=$3`,
+		inv.Subtotal, inv.Total, inv.ID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("update totals: %w", err)
+	}
+
+	if err = tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit: %w", err)
+	}
+	return inv, nil
 }
 
 // scanInvoice reads one invoice row (without lines).

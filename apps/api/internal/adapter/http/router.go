@@ -11,6 +11,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 
+	"github.com/danzt/daas/api/internal/adapter/exchangerate"
 	"github.com/danzt/daas/api/internal/adapter/http/handler"
 	mw "github.com/danzt/daas/api/internal/adapter/http/middleware"
 	"github.com/danzt/daas/api/internal/adapter/storage"
@@ -118,6 +119,11 @@ func NewRouterWithConfig(cfg RouterConfig) *echo.Echo { //nolint:funlen,cyclop
 	// Create InternalInvoiceService once — shared between InvoiceHandler and auto-invoice.
 	internalInvoiceSvc := app.NewInternalInvoiceService(cfg.Pool)
 	invoiceHandler := handler.NewInvoiceHandlerWithService(internalInvoiceSvc)
+	// POS quick-sale reuses InternalInvoiceService; it only needs a CashSessionService
+	// to require an open cash session, so it gets its own instance (CashSessionHandler
+	// below keeps its own, both are stateless and share the same pool).
+	internalInvoiceSvc.SetCashSessionService(app.NewCashSessionService(cfg.Pool, exchangerate.NewBCVFetcher("")))
+	posSaleHandler := handler.NewPosSaleHandler(internalInvoiceSvc)
 	// FiscalInvoiceHandler — use the pre-built service when provided by main.go
 	// (so the same instance is shared with the retry worker), otherwise fall back
 	// to creating a fresh one with the mock adapter.
@@ -151,7 +157,7 @@ func NewRouterWithConfig(cfg RouterConfig) *echo.Echo { //nolint:funlen,cyclop
 	pdfHandler := handler.NewPDFHandler(cfg.Pool, internalInvoiceSvc, fiscalInvoiceSvc)
 
 	// Routes
-	registerRoutes(e, authMW, cfg.Pool, tenantHandler, authHandler, userHandler, integrationHandler, meHandler, productHandler, inventoryHandler, invoiceHandler, fiscalInvoiceHandler, supplierHandler, reportHandler, saleHandler, shopOrderHandler, paymentMethodHandler, brandingHandler, dashboardHandler, pdfHandler, cashSessionHandler)
+	registerRoutes(e, authMW, cfg.Pool, tenantHandler, authHandler, userHandler, integrationHandler, meHandler, productHandler, inventoryHandler, invoiceHandler, fiscalInvoiceHandler, supplierHandler, reportHandler, saleHandler, shopOrderHandler, paymentMethodHandler, brandingHandler, dashboardHandler, pdfHandler, cashSessionHandler, posSaleHandler)
 
 	// Storefront public route group — no auth required.
 	// Rate limiter runs first (fast reject), then tenant resolver activates RLS.
@@ -241,6 +247,7 @@ func registerRoutes(
 	dashboardHandler *handler.DashboardHandler,
 	pdfHandler *handler.PDFHandler,
 	cashSessionHandler *handler.CashSessionHandler,
+	posSaleHandler *handler.PosSaleHandler,
 ) {
 	// Health check — unauthenticated
 	e.GET("/health", healthHandler)
@@ -375,6 +382,9 @@ func registerRoutes(
 	api.POST("/cash-sessions/open", cashSessionHandler.Open)
 	api.POST("/cash-sessions/close", cashSessionHandler.Close)
 	api.GET("/cash-sessions/open", cashSessionHandler.GetOpen)
+
+	// POS quick-sale — counter sale tied to the tenant's open cash session.
+	api.POST("/pos/sales", posSaleHandler.Create)
 }
 
 // healthHandler responds with a simple status OK payload.

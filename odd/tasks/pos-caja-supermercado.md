@@ -29,7 +29,7 @@ Venezuela eliminó la obligatoriedad de facturación electrónica, lo que abre l
 - [ ] T1 — Migration: tabla `cash_sessions` (tenant_id, opened_by, opened_at, exchange_rate_bs_usd, status, closed_by, closed_at, closing notes)
 - [ ] T2 — Migration: tabla `exchange_rates` (tenant_id, date, rate_bs_per_usd, source, fetched_at) + columnas `cash_session_id`, `payment_method`, `currency` en `internal_invoices`
 - [x] T3 — Domain + `CashSessionService`: abrir caja (con auto-fetch de tasa + fallback manual) y cerrar caja
-- [ ] T4 — POS quick-sale: endpoint/servicio que crea `internal_invoice` ligado a la caja abierta, valida stock, lo deduce
+- [x] T4 — POS quick-sale: endpoint/servicio que crea `internal_invoice` ligado a la caja abierta, valida stock, lo deduce
 - [ ] T5 — `ReportService.CashSessionSummary`: total BS/USD, ventas, clientes, consumo de inventario, filtrado por `cash_session_id`
 - [ ] T6 — `ReportService.SalesBook` (libro de ventas), espejo de `PurchaseReport`
 - [ ] T7 — HTTP handlers + rutas para T3-T6
@@ -50,7 +50,12 @@ Venezuela eliminó la obligatoriedad de facturación electrónica, lo que abre l
 - Al cerrar caja, se ve: total BS, total USD, # ventas, # productos vendidos, inventario restante.
 - `sale_orders` y `fiscal_invoices` siguen funcionando sin cambios.
 
+## Delivery strategy
+
+- ask-on-risk, elegido por el usuario al pasar las ~400 líneas acumuladas: **feature-branch-chain**. Los PRs se encadenan contra `feat/pos-caja-supermercado`, ninguno llega a `main` hasta que la feature esté completa.
+
 ## Progress
 
 - 2026-11-12: Documento creado tras sesión de planning. Diseño acordado con el usuario, pendiente de iniciar T1.
 - 2026-11-13: T3 implementado. `internal/domain/cashsession`, `internal/adapter/exchangerate` (BCVFetcher + MockFetcher), `app.CashSessionService` (Open/Close/GetOpen), `handler.CashSessionHandler` + routes under `/api/v1/cash-sessions`. Verified: `go build ./...` PASS, `go vet ./...` PASS, `gofmt -l .` PASS (empty), `go test ./internal/app/... ./internal/domain/cashsession/... ./internal/adapter/exchangerate/...` PASS (DB-backed cases skip without `TEST_DATABASE_URL`, following the existing `scan_integrity_test.go` convention). No main.go wiring needed — `CashSessionService` has no shared/background-worker dependency, unlike `FiscalInvoiceService`.
+- 2026-11-13: T4 implementado — `InternalInvoiceService.CreatePOSSale` (exige caja abierta, resuelve `internal_price`, correlativo, crea factura `issued` + deduce stock en una transacción), `handler/pos_sale_handler.go` (`POST /api/v1/pos/sales`), `domain/invoice` nuevos tipos (`PaymentMethod`, `PosSaleRequest`, `ErrInsufficientStock` sentinel — bug fix de paso: `deductStock` devolvía error genérico, ahora también beneficia a `Issue`). Verified: `go build ./...` PASS, `go vet ./...` PASS, `gofmt -l .` PASS (empty), `go test ./internal/app/... ./internal/adapter/http/handler/...` PASS (DB-backed cases skip sin `TEST_DATABASE_URL`).

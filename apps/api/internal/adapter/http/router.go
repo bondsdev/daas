@@ -131,6 +131,7 @@ func NewRouterWithConfig(cfg RouterConfig) *echo.Echo { //nolint:funlen,cyclop
 	supplierHandler := handler.NewSupplierHandler(cfg.Pool)
 	reportHandler := handler.NewReportHandler(cfg.Pool)
 	saleHandler := handler.NewSaleHandler(cfg.Pool)
+	cashSessionHandler := handler.NewCashSessionHandler(cfg.Pool)
 
 	// Build lifecycle email notifier from injected NotificationSvc.
 	// nil-safe: if the notification service is not configured, the notifier
@@ -150,7 +151,7 @@ func NewRouterWithConfig(cfg RouterConfig) *echo.Echo { //nolint:funlen,cyclop
 	pdfHandler := handler.NewPDFHandler(cfg.Pool, internalInvoiceSvc, fiscalInvoiceSvc)
 
 	// Routes
-	registerRoutes(e, authMW, cfg.Pool, tenantHandler, authHandler, userHandler, integrationHandler, meHandler, productHandler, inventoryHandler, invoiceHandler, fiscalInvoiceHandler, supplierHandler, reportHandler, saleHandler, shopOrderHandler, paymentMethodHandler, brandingHandler, dashboardHandler, pdfHandler)
+	registerRoutes(e, authMW, cfg.Pool, tenantHandler, authHandler, userHandler, integrationHandler, meHandler, productHandler, inventoryHandler, invoiceHandler, fiscalInvoiceHandler, supplierHandler, reportHandler, saleHandler, shopOrderHandler, paymentMethodHandler, brandingHandler, dashboardHandler, pdfHandler, cashSessionHandler)
 
 	// Storefront public route group — no auth required.
 	// Rate limiter runs first (fast reject), then tenant resolver activates RLS.
@@ -239,6 +240,7 @@ func registerRoutes(
 	brandingHandler *handler.BrandingHandler,
 	dashboardHandler *handler.DashboardHandler,
 	pdfHandler *handler.PDFHandler,
+	cashSessionHandler *handler.CashSessionHandler,
 ) {
 	// Health check — unauthenticated
 	e.GET("/health", healthHandler)
@@ -368,6 +370,11 @@ func registerRoutes(
 
 	// Dashboard KPIs — single combined endpoint (S10-PR1)
 	api.GET("/dashboard", dashboardHandler.Get)
+
+	// Cash register (caja) sessions — action routes before /:id-less static paths
+	api.POST("/cash-sessions/open", cashSessionHandler.Open)
+	api.POST("/cash-sessions/close", cashSessionHandler.Close)
+	api.GET("/cash-sessions/open", cashSessionHandler.GetOpen)
 }
 
 // healthHandler responds with a simple status OK payload.

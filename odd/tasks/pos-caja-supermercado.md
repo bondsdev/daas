@@ -26,13 +26,13 @@ Venezuela eliminó la obligatoriedad de facturación electrónica, lo que abre l
 
 ## Tasks
 
-- [ ] T1 — Migration: tabla `cash_sessions` (tenant_id, opened_by, opened_at, exchange_rate_bs_usd, status, closed_by, closed_at, closing notes)
-- [ ] T2 — Migration: tabla `exchange_rates` (tenant_id, date, rate_bs_per_usd, source, fetched_at) + columnas `cash_session_id`, `payment_method`, `currency` en `internal_invoices`
+- [x] T1 — Migration: tabla `cash_sessions` (tenant_id, opened_by, opened_at, exchange_rate_bs_usd, status, closed_by, closed_at, closing notes)
+- [x] T2 — Migration: tabla `exchange_rates` (tenant_id, date, rate_bs_per_usd, source, fetched_at) + columnas `cash_session_id`, `payment_method`, `currency` en `internal_invoices` (ambas en la misma migración 000019, mecánicamente coherente)
 - [x] T3 — Domain + `CashSessionService`: abrir caja (con auto-fetch de tasa + fallback manual) y cerrar caja
 - [x] T4 — POS quick-sale: endpoint/servicio que crea `internal_invoice` ligado a la caja abierta, valida stock, lo deduce
 - [x] T5 — `ReportService.CashSessionSummary`: total BS/USD, ventas, clientes, consumo de inventario, filtrado por `cash_session_id`
 - [x] T6 — `ReportService.SalesBook` (libro de ventas), espejo de `PurchaseReport`
-- [ ] T7 — HTTP handlers + rutas para T3-T6
+- [x] T7 — HTTP handlers + rutas para T3-T6 (entregadas junto con cada tarea respectiva, no como paso separado)
 - [ ] T8 — Frontend: pantalla de apertura/cierre de caja + resumen de cierre
 - [ ] T9 — Frontend: pantalla de venta rápida (búsqueda configurable + carrito + cobro)
 - [ ] T10 — Tests (Go: services/handlers; Vitest donde aplique)

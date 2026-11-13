@@ -30,8 +30,8 @@ concurrency:
 env:
   # IDs de las aplicaciones en Dokploy. Completar una vez creadas (no son
   # secretas, son solo identificadores internos de Dokploy).
-  DAAS_API_APP_ID: "TODO-reemplazar-tras-crear-la-app-en-dokploy"
-  DAAS_WEB_APP_ID: "TODO-reemplazar-tras-crear-la-app-en-dokploy"
+  DAAS_API_APP_ID: "l-Y6wGbWThWQT85EXs8Z4" # daas-api
+  DAAS_WEB_APP_ID: "TCzpPjSwkSRry2VVZaZ67" # daas-frontend
 
 jobs:
   verify:

@@ -17,7 +17,7 @@ import (
 // setupReportTest connects to TEST_DATABASE_URL and seeds a tenant, user, and
 // an open cash session with the given exchange rate, following the same
 // skip-when-unset convention as cash_session_service_test.go.
-func setupReportTest(t *testing.T, rate float64) (*pgxpool.Pool, uuid.UUID, uuid.UUID) {
+func setupReportTest(t *testing.T, rate float64) (*pgxpool.Pool, uuid.UUID, uuid.UUID, uuid.UUID) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
 		t.Skip("TEST_DATABASE_URL not set")
@@ -31,8 +31,8 @@ func setupReportTest(t *testing.T, rate float64) (*pgxpool.Pool, uuid.UUID, uuid
 
 	var tenantID uuid.UUID
 	if err := pool.QueryRow(ctx,
-		`INSERT INTO tenants (name, country_code) VALUES ($1, 'VE') RETURNING id`,
-		"report-test-"+uuid.NewString(),
+		`INSERT INTO tenants (name, country_code, slug) VALUES ($1, 'VE', $2) RETURNING id`,
+		"report-test-"+uuid.NewString(), uuid.NewString(),
 	).Scan(&tenantID); err != nil {
 		t.Fatalf("create tenant: %v", err)
 	}
@@ -55,25 +55,25 @@ func setupReportTest(t *testing.T, rate float64) (*pgxpool.Pool, uuid.UUID, uuid
 		t.Fatalf("create cash session: %v", err)
 	}
 
-	return pool, tenantID, sessionID
+	return pool, tenantID, userID, sessionID
 }
 
 func TestReportService_CashSessionSummary(t *testing.T) {
-	pool, tenantID, sessionID := setupReportTest(t, 40.0)
+	pool, tenantID, userID, sessionID := setupReportTest(t, 40.0)
 	ctx := context.Background()
 
 	// One VES sale and one USD sale on the same session.
 	if _, err := pool.Exec(ctx,
-		`INSERT INTO internal_invoices (tenant_id, status, subtotal, total, cash_session_id, payment_method, currency)
-		 VALUES ($1,'issued',400,400,$2,'cash','VES')`,
-		tenantID, sessionID,
+		`INSERT INTO internal_invoices (tenant_id, status, subtotal, total, cash_session_id, payment_method, currency, created_by)
+		 VALUES ($1,'issued',400,400,$2,'cash','VES',$3)`,
+		tenantID, sessionID, userID,
 	); err != nil {
 		t.Fatalf("insert VES invoice: %v", err)
 	}
 	if _, err := pool.Exec(ctx,
-		`INSERT INTO internal_invoices (tenant_id, status, subtotal, total, cash_session_id, payment_method, currency)
-		 VALUES ($1,'issued',10,10,$2,'card','USD')`,
-		tenantID, sessionID,
+		`INSERT INTO internal_invoices (tenant_id, status, subtotal, total, cash_session_id, payment_method, currency, created_by)
+		 VALUES ($1,'issued',10,10,$2,'card','USD',$3)`,
+		tenantID, sessionID, userID,
 	); err != nil {
 		t.Fatalf("insert USD invoice: %v", err)
 	}
@@ -100,20 +100,20 @@ func TestReportService_CashSessionSummary(t *testing.T) {
 }
 
 func TestReportService_SalesBook(t *testing.T) {
-	pool, tenantID, _ := setupReportTest(t, 40.0)
+	pool, tenantID, userID, _ := setupReportTest(t, 40.0)
 	ctx := context.Background()
 
 	if _, err := pool.Exec(ctx,
-		`INSERT INTO internal_invoices (tenant_id, status, subtotal, total, correlative, customer_name, customer_id_number, issued_at)
-		 VALUES ($1,'issued',100,100,'INT-2026-00001','Cliente Mostrador','V-1', now())`,
-		tenantID,
+		`INSERT INTO internal_invoices (tenant_id, status, subtotal, total, correlative, customer_name, customer_id_number, issued_at, created_by)
+		 VALUES ($1,'issued',100,100,'INT-2026-00001','Cliente Mostrador','V-1', now(), $2)`,
+		tenantID, userID,
 	); err != nil {
 		t.Fatalf("insert internal invoice: %v", err)
 	}
 	if _, err := pool.Exec(ctx,
-		`INSERT INTO fiscal_invoices (tenant_id, status, subtotal_base, tax_amount, total, fiscal_number, customer_name, customer_id_number, issued_at)
-		 VALUES ($1,'issued',200,32,232,'FIS-00001','Cliente Fiscal','J-1', now())`,
-		tenantID,
+		`INSERT INTO fiscal_invoices (tenant_id, status, subtotal_base, tax_amount, total, fiscal_number, customer_name, customer_id_number, issued_at, created_by)
+		 VALUES ($1,'issued',200,32,232,'FIS-00001','Cliente Fiscal','J-1', now(), $2)`,
+		tenantID, userID,
 	); err != nil {
 		t.Fatalf("insert fiscal invoice: %v", err)
 	}
@@ -156,13 +156,13 @@ func TestReportService_SalesBook(t *testing.T) {
 }
 
 func TestReportService_CashSessionSummaryNotFoundForOtherTenant(t *testing.T) {
-	pool, _, sessionID := setupReportTest(t, 40.0)
+	pool, _, _, sessionID := setupReportTest(t, 40.0)
 	ctx := context.Background()
 
 	var otherTenantID uuid.UUID
 	if err := pool.QueryRow(ctx,
-		`INSERT INTO tenants (name, country_code) VALUES ($1, 'VE') RETURNING id`,
-		"report-test-other-"+uuid.NewString(),
+		`INSERT INTO tenants (name, country_code, slug) VALUES ($1, 'VE', $2) RETURNING id`,
+		"report-test-other-"+uuid.NewString(), uuid.NewString(),
 	).Scan(&otherTenantID); err != nil {
 		t.Fatalf("create other tenant: %v", err)
 	}

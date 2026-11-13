@@ -2,7 +2,10 @@
 
 CREATE TYPE cash_session_status AS ENUM ('open', 'closed');
 CREATE TYPE exchange_rate_source AS ENUM ('auto', 'manual');
-CREATE TYPE payment_method_type AS ENUM ('cash', 'card', 'mobile_payment');
+-- Named pos_payment_method_type (not payment_method_type) to avoid colliding
+-- with the unrelated payment_method_type enum from 000011_tenant_payment_methods
+-- (tenant storefront payment methods: pago_movil/transfer_bank/...).
+CREATE TYPE pos_payment_method_type AS ENUM ('cash', 'card', 'mobile_payment');
 
 CREATE TABLE cash_sessions (
     id                 UUID                 PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -36,7 +39,7 @@ CREATE TABLE exchange_rates (
 
 ALTER TABLE internal_invoices
     ADD COLUMN cash_session_id UUID REFERENCES cash_sessions(id),
-    ADD COLUMN payment_method  payment_method_type,
+    ADD COLUMN payment_method  pos_payment_method_type,
     ADD COLUMN currency        VARCHAR(3) NOT NULL DEFAULT 'VES';
 
 CREATE INDEX idx_internal_invoices_cash_session ON internal_invoices(cash_session_id);

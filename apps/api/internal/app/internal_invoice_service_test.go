@@ -31,8 +31,8 @@ func setupPOSSaleTest(t *testing.T, stock float64) (*InternalInvoiceService, *Ca
 
 	var tenantID uuid.UUID
 	if err := pool.QueryRow(ctx,
-		`INSERT INTO tenants (name, country_code) VALUES ($1, 'VE') RETURNING id`,
-		"pos-sale-test-"+uuid.NewString(),
+		`INSERT INTO tenants (name, country_code, slug) VALUES ($1, 'VE', $2) RETURNING id`,
+		"pos-sale-test-"+uuid.NewString(), uuid.NewString(),
 	).Scan(&tenantID); err != nil {
 		t.Fatalf("create tenant: %v", err)
 	}
@@ -54,10 +54,11 @@ func setupPOSSaleTest(t *testing.T, stock float64) (*InternalInvoiceService, *Ca
 	).Scan(&productID); err != nil {
 		t.Fatalf("create product: %v", err)
 	}
+	// products has an initialize_product_stock trigger that already inserts a
+	// zeroed product_stock row, so the seed updates it instead of inserting.
 	if _, err := pool.Exec(ctx,
-		`INSERT INTO product_stock (tenant_id, product_id, quantity_on_hand, last_updated_at)
-		 VALUES ($1, $2, $3, NOW())`,
-		tenantID, productID, stock,
+		`UPDATE product_stock SET quantity_on_hand = $1, last_updated_at = NOW() WHERE product_id = $2`,
+		stock, productID,
 	); err != nil {
 		t.Fatalf("seed stock: %v", err)
 	}

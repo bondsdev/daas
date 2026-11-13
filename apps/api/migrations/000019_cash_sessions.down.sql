@@ -9,6 +9,6 @@ ALTER TABLE internal_invoices
 DROP TABLE exchange_rates;
 DROP TABLE cash_sessions;
 
-DROP TYPE payment_method_type;
+DROP TYPE pos_payment_method_type;
 DROP TYPE exchange_rate_source;
 DROP TYPE cash_session_status;

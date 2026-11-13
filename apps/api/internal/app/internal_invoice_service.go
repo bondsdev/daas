@@ -780,9 +780,10 @@ func (s *InternalInvoiceService) CreatePOSSale(ctx context.Context, tenantID uui
 	}
 
 	type resolvedLine struct {
-		productID uuid.UUID
-		quantity  float64
-		unitPrice float64
+		productID   uuid.UUID
+		description string
+		quantity    float64
+		unitPrice   float64
 	}
 	lines := make([]resolvedLine, 0, len(req.Lines))
 	for _, l := range req.Lines {
@@ -790,13 +791,14 @@ func (s *InternalInvoiceService) CreatePOSSale(ctx context.Context, tenantID uui
 			return nil, fmt.Errorf("quantity must be positive")
 		}
 		var isFiscal bool
+		var name string
 		var internalPrice float64
 		err := s.pool.QueryRow(ctx,
-			`SELECT is_fiscal, COALESCE(internal_price, 0)
+			`SELECT is_fiscal, name, COALESCE(internal_price, 0)
 			 FROM products
 			 WHERE id = $1 AND tenant_id = $2 AND active = true`,
 			l.ProductID, tenantID,
-		).Scan(&isFiscal, &internalPrice)
+		).Scan(&isFiscal, &name, &internalPrice)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return nil, fmt.Errorf("product %s not found or inactive", l.ProductID)
@@ -806,7 +808,7 @@ func (s *InternalInvoiceService) CreatePOSSale(ctx context.Context, tenantID uui
 		if isFiscal {
 			return nil, invoice.ErrFiscalProductForbidden
 		}
-		lines = append(lines, resolvedLine{productID: l.ProductID, quantity: l.Quantity, unitPrice: internalPrice})
+		lines = append(lines, resolvedLine{productID: l.ProductID, description: name, quantity: l.Quantity, unitPrice: internalPrice})
 	}
 
 	tx, err := s.pool.Begin(ctx)
@@ -858,21 +860,22 @@ func (s *InternalInvoiceService) CreatePOSSale(ctx context.Context, tenantID uui
 		lineID := uuid.New()
 		_, err = tx.Exec(ctx, `
 			INSERT INTO internal_invoice_lines
-				(id, invoice_id, product_id, quantity, unit_price, subtotal, sort_order)
-			VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-			lineID, inv.ID, l.productID, l.quantity, l.unitPrice, lineSubtotal, i,
+				(id, invoice_id, product_id, description, quantity, unit_price, subtotal, sort_order)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+			lineID, inv.ID, l.productID, l.description, l.quantity, l.unitPrice, lineSubtotal, i,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("insert line: %w", err)
 		}
 		inv.Lines = append(inv.Lines, invoice.InvoiceLine{
-			ID:        lineID,
-			InvoiceID: inv.ID,
-			ProductID: l.productID,
-			Quantity:  l.quantity,
-			UnitPrice: l.unitPrice,
-			Subtotal:  lineSubtotal,
-			SortOrder: i,
+			ID:          lineID,
+			InvoiceID:   inv.ID,
+			ProductID:   l.productID,
+			Description: l.description,
+			Quantity:    l.quantity,
+			UnitPrice:   l.unitPrice,
+			Subtotal:    lineSubtotal,
+			SortOrder:   i,
 		})
 
 		if err := s.deductStock(ctx, tx, tenantID, l.productID, l.quantity, inv.ID, createdBy); err != nil {

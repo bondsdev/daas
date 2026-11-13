@@ -30,8 +30,8 @@ func setupCashSessionTest(t *testing.T) (*pgxpool.Pool, uuid.UUID, string) {
 
 	var tenantID uuid.UUID
 	if err := pool.QueryRow(ctx,
-		`INSERT INTO tenants (name, country_code) VALUES ($1, 'VE') RETURNING id`,
-		"cash-session-test-"+uuid.NewString(),
+		`INSERT INTO tenants (name, country_code, slug) VALUES ($1, 'VE', $2) RETURNING id`,
+		"cash-session-test-"+uuid.NewString(), uuid.NewString(),
 	).Scan(&tenantID); err != nil {
 		t.Fatalf("create tenant: %v", err)
 	}

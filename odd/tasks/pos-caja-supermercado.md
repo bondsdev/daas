@@ -53,6 +53,7 @@ Venezuela eliminó la obligatoriedad de facturación electrónica, lo que abre l
 ## Delivery strategy
 
 - ask-on-risk, elegido por el usuario al pasar las ~400 líneas acumuladas: **feature-branch-chain**. Los PRs se encadenan contra `feat/pos-caja-supermercado`, ninguno llega a `main` hasta que la feature esté completa.
+- **Slice 1** (sin abrir PR aún, pendiente de que el usuario pida pushear/abrir PRs): commits de migración (T1/T2) + T3 (caja/tasa) + T4 (venta rápida) — 1195 líneas, 3 commits en `feat/pos-caja-supermercado`.
 
 ## Progress
 

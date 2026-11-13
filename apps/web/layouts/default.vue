@@ -7,6 +7,7 @@ import {
   FileText,
   Truck,
   BarChart2,
+  Wallet,
   Settings,
   LogOut,
   ChevronRight,
@@ -86,6 +87,11 @@ const sidebarItems: NavGroup[] = [
     id: 3,
     label: "Ventas",
     items: [
+      {
+        title: "Caja",
+        url: "/cash-sessions",
+        icon: Wallet,
+      },
       {
         title: "Órdenes de venta",
         url: "/sales-orders",

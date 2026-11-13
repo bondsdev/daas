@@ -33,7 +33,7 @@ test("complete a quick sale by barcode with an open cash session", async ({
   await barcodeInput.press("Enter");
 
   await expect(page.getByText("1 ítem")).toBeVisible();
-  await expect(page.getByText("$12.50")).toBeVisible();
+  await expect(page.getByText("$12.50").last()).toBeVisible();
 
   await page.getByRole("button", { name: "Efectivo" }).click();
   await page.getByRole("button", { name: "Cobrar" }).click();

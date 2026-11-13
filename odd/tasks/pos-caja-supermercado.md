@@ -35,7 +35,7 @@ Venezuela eliminó la obligatoriedad de facturación electrónica, lo que abre l
 - [x] T7 — HTTP handlers + rutas para T3-T6 (entregadas junto con cada tarea respectiva, no como paso separado)
 - [x] T8 — Frontend: pantalla de apertura/cierre de caja + resumen de cierre
 - [x] T9 — Frontend: pantalla de venta rápida (búsqueda configurable + carrito + cobro)
-- [ ] T10 — Tests (Go: services/handlers — DONE y verificados contra Postgres real; E2E Playwright para caja/POS — infra construida y specs reales escritos, **bloqueado** por bug real de backend descubierto al correrlos, ver Progress)
+- [x] T10 — Tests (Go: services/handlers verificados contra Postgres real; E2E Playwright real para caja/POS, 4/4 PASS contra el stack completo corriendo)
 
 ## Constraints
 
@@ -56,6 +56,8 @@ Venezuela eliminó la obligatoriedad de facturación electrónica, lo que abre l
 - **Slice 1** (sin abrir PR aún, pendiente de que el usuario pida pushear/abrir PRs): commits de migración (T1/T2) + T3 (caja/tasa) + T4 (venta rápida) — 1195 líneas, 3 commits en `feat/pos-caja-supermercado`.
 
 ## Progress
+
+- 2026-11-13: T10 cerrado. El bug de registro de tenant (`tenant_service.go`, SQLSTATE 42P08 por ambigüedad de tipo pgx en `$1`) quedó arreglado con un cast explícito (commit `ca3a036`). Dos selectores de Playwright ambiguos (`getByText("Ventas")`, `getByText("$12.50")`) se desambiguaron. **4/4 tests E2E reales PASS** (`cash-sessions.spec.ts`, `pos-sale.spec.ts`) contra API + web + Supabase local + Postgres migrado corriendo de verdad, no mocks ni skips.
 
 - 2026-11-12: Documento creado tras sesión de planning. Diseño acordado con el usuario, pendiente de iniciar T1.
 - 2026-11-13: T3 implementado. `internal/domain/cashsession`, `internal/adapter/exchangerate` (BCVFetcher + MockFetcher), `app.CashSessionService` (Open/Close/GetOpen), `handler.CashSessionHandler` + routes under `/api/v1/cash-sessions`. Verified: `go build ./...` PASS, `go vet ./...` PASS, `gofmt -l .` PASS (empty), `go test ./internal/app/... ./internal/domain/cashsession/... ./internal/adapter/exchangerate/...` PASS (DB-backed cases skip without `TEST_DATABASE_URL`, following the existing `scan_integrity_test.go` convention). No main.go wiring needed — `CashSessionService` has no shared/background-worker dependency, unlike `FiscalInvoiceService`.

@@ -32,5 +32,5 @@ test("close a cash session and see the closing summary", async ({ page }) => {
   await expect(page.getByText("Resumen del cierre")).toBeVisible();
   await expect(page.getByText("Total BS")).toBeVisible();
   await expect(page.getByText("Total USD")).toBeVisible();
-  await expect(page.getByText("Ventas")).toBeVisible();
+  await expect(page.getByText("Sin ventas registradas")).toBeVisible();
 });

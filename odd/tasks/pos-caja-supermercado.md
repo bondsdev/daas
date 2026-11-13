@@ -35,7 +35,7 @@ Venezuela eliminó la obligatoriedad de facturación electrónica, lo que abre l
 - [x] T7 — HTTP handlers + rutas para T3-T6 (entregadas junto con cada tarea respectiva, no como paso separado)
 - [x] T8 — Frontend: pantalla de apertura/cierre de caja + resumen de cierre
 - [x] T9 — Frontend: pantalla de venta rápida (búsqueda configurable + carrito + cobro)
-- [ ] T10 — Tests (Go: services/handlers; Vitest donde aplique)
+- [ ] T10 — Tests (Go: services/handlers — DONE y verificados contra Postgres real; E2E Playwright para caja/POS — en progreso, requiere infra net-new porque todo el resto del repo son stubs test.skip)
 
 ## Constraints
 

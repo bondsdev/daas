@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/danzt/daas/api/internal/adapter/exchangerate"
 	"github.com/danzt/daas/api/internal/domain/product"
 )
 
@@ -33,7 +34,11 @@ type CreateProductRequest struct {
 	IsFiscal      bool
 	FiscalPrice   *float64
 	InternalPrice *float64
-	TaxRate       *float64
+	// PriceUSD, when set, makes InternalPrice a derived value: it is
+	// computed immediately as PriceUSD * the tenant's current BS/USD rate,
+	// overriding whatever InternalPrice was also passed.
+	PriceUSD *float64
+	TaxRate  *float64
 }
 
 // UpdateProductRequest is the input for updating an existing product.
@@ -45,7 +50,11 @@ type UpdateProductRequest struct {
 	CategoryID    *uuid.UUID
 	FiscalPrice   *float64
 	InternalPrice *float64
-	TaxRate       *float64
+	// PriceUSD, when set, makes InternalPrice a derived value: it is
+	// computed immediately as PriceUSD * the tenant's current BS/USD rate,
+	// overriding whatever InternalPrice was also passed.
+	PriceUSD *float64
+	TaxRate  *float64
 }
 
 // CreateCategoryRequest is the input for creating a product category.
@@ -63,12 +72,26 @@ type ProductResult struct {
 // ProductService handles the product catalog use cases.
 // It orchestrates domain validation and persistence via pgxpool.
 type ProductService struct {
-	pool *pgxpool.Pool
+	pool    *pgxpool.Pool
+	fetcher exchangerate.Fetcher
 }
 
-// NewProductService creates a ProductService backed by the given connection pool.
-func NewProductService(pool *pgxpool.Pool) *ProductService {
-	return &ProductService{pool: pool}
+// NewProductService creates a ProductService backed by the given connection
+// pool and BS/USD rate fetcher. The fetcher is only consulted when a USD
+// price is being resolved for a tenant that has no exchange_rates row yet —
+// see currentExchangeRate.
+func NewProductService(pool *pgxpool.Pool, fetcher exchangerate.Fetcher) *ProductService {
+	return &ProductService{pool: pool, fetcher: fetcher}
+}
+
+// resolveUSDPrice computes internal_price = priceUSD * the tenant's current
+// BS/USD rate, resolved via the shared currentExchangeRate resolver (T2).
+func (s *ProductService) resolveUSDPrice(ctx context.Context, tenantID uuid.UUID, priceUSD float64) (float64, error) {
+	rate, err := currentExchangeRate(ctx, s.pool, s.fetcher, tenantID)
+	if err != nil {
+		return 0, fmt.Errorf("resolve usd price: %w", err)
+	}
+	return priceUSD * rate, nil
 }
 
 // List returns a paginated list of products for the given tenant.
@@ -88,7 +111,7 @@ func (s *ProductService) List(ctx context.Context, tenantID uuid.UUID, f Product
 
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, tenant_id, name, sku, barcode, description, category_id,
-		       is_fiscal, fiscal_price, internal_price, tax_rate, active, image_url, created_at, updated_at
+		       is_fiscal, fiscal_price, internal_price, price_usd, tax_rate, active, image_url, created_at, updated_at
 		FROM products
 		WHERE tenant_id = $1
 		  AND ($2::boolean IS NULL OR active = $2)
@@ -122,7 +145,7 @@ func (s *ProductService) List(ctx context.Context, tenantID uuid.UUID, f Product
 func (s *ProductService) Get(ctx context.Context, tenantID, id uuid.UUID) (*product.Product, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT id, tenant_id, name, sku, barcode, description, category_id,
-		       is_fiscal, fiscal_price, internal_price, tax_rate, active, image_url, created_at, updated_at
+		       is_fiscal, fiscal_price, internal_price, price_usd, tax_rate, active, image_url, created_at, updated_at
 		FROM products
 		WHERE id = $1 AND tenant_id = $2`,
 		id, tenantID,
@@ -141,6 +164,17 @@ func (s *ProductService) Get(ctx context.Context, tenantID, id uuid.UUID) (*prod
 // another active product, it returns a ProductResult with a "barcode_duplicate"
 // warning but does NOT block the creation.
 func (s *ProductService) Create(ctx context.Context, tenantID uuid.UUID, req CreateProductRequest) (*ProductResult, error) {
+	// PriceUSD is the source of truth when set: compute internal_price from
+	// the tenant's current rate right now, overriding any InternalPrice also
+	// passed, so the product is never left with a stale/zero price.
+	if req.PriceUSD != nil {
+		computed, err := s.resolveUSDPrice(ctx, tenantID, *req.PriceUSD)
+		if err != nil {
+			return nil, err
+		}
+		req.InternalPrice = &computed
+	}
+
 	// Domain validation first — pure Go, no I/O.
 	p := &product.Product{
 		TenantID:      tenantID,
@@ -152,6 +186,7 @@ func (s *ProductService) Create(ctx context.Context, tenantID uuid.UUID, req Cre
 		IsFiscal:      req.IsFiscal,
 		FiscalPrice:   req.FiscalPrice,
 		InternalPrice: req.InternalPrice,
+		PriceUSD:      req.PriceUSD,
 		TaxRate:       req.TaxRate,
 	}
 	if err := p.Validate(); err != nil {
@@ -174,10 +209,10 @@ func (s *ProductService) Create(ctx context.Context, tenantID uuid.UUID, req Cre
 	// Insert.
 	row := s.pool.QueryRow(ctx, `
 		INSERT INTO products (tenant_id, name, sku, barcode, description, category_id,
-		                      is_fiscal, fiscal_price, internal_price, tax_rate)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		                      is_fiscal, fiscal_price, internal_price, price_usd, tax_rate)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		RETURNING id, tenant_id, name, sku, barcode, description, category_id,
-		          is_fiscal, fiscal_price, internal_price, tax_rate, active, image_url, created_at, updated_at`,
+		          is_fiscal, fiscal_price, internal_price, price_usd, tax_rate, active, image_url, created_at, updated_at`,
 		tenantID,
 		nullableString(req.Name),
 		nullableString(req.SKU),
@@ -187,6 +222,7 @@ func (s *ProductService) Create(ctx context.Context, tenantID uuid.UUID, req Cre
 		req.IsFiscal,
 		req.FiscalPrice,
 		req.InternalPrice,
+		req.PriceUSD,
 		req.TaxRate,
 	)
 	created, err := scanProduct(row)
@@ -199,17 +235,28 @@ func (s *ProductService) Create(ctx context.Context, tenantID uuid.UUID, req Cre
 
 // Update modifies mutable fields of an existing product.
 func (s *ProductService) Update(ctx context.Context, tenantID, id uuid.UUID, req UpdateProductRequest) (*product.Product, error) {
+	// PriceUSD is the source of truth when set: compute internal_price from
+	// the tenant's current rate right now, overriding any InternalPrice also
+	// passed, so the product is never left with a stale/zero price.
+	if req.PriceUSD != nil {
+		computed, err := s.resolveUSDPrice(ctx, tenantID, *req.PriceUSD)
+		if err != nil {
+			return nil, err
+		}
+		req.InternalPrice = &computed
+	}
+
 	row := s.pool.QueryRow(ctx, `
 		UPDATE products
 		SET name = $3, sku = $4, barcode = $5, description = $6, category_id = $7,
-		    fiscal_price = $8, internal_price = $9, tax_rate = $10, updated_at = NOW()
+		    fiscal_price = $8, internal_price = $9, price_usd = $10, tax_rate = $11, updated_at = NOW()
 		WHERE id = $1 AND tenant_id = $2
 		RETURNING id, tenant_id, name, sku, barcode, description, category_id,
-		          is_fiscal, fiscal_price, internal_price, tax_rate, active, image_url, created_at, updated_at`,
+		          is_fiscal, fiscal_price, internal_price, price_usd, tax_rate, active, image_url, created_at, updated_at`,
 		id, tenantID,
 		req.Name, nullableString(req.SKU), nullableString(req.Barcode),
 		nullableString(req.Description), req.CategoryID,
-		req.FiscalPrice, req.InternalPrice, req.TaxRate,
+		req.FiscalPrice, req.InternalPrice, req.PriceUSD, req.TaxRate,
 	)
 	p, err := scanProduct(row)
 	if err != nil {
@@ -227,7 +274,7 @@ func (s *ProductService) Delete(ctx context.Context, tenantID, id uuid.UUID) (*p
 		UPDATE products SET active = FALSE, updated_at = NOW()
 		WHERE id = $1 AND tenant_id = $2
 		RETURNING id, tenant_id, name, sku, barcode, description, category_id,
-		          is_fiscal, fiscal_price, internal_price, tax_rate, active, image_url, created_at, updated_at`,
+		          is_fiscal, fiscal_price, internal_price, price_usd, tax_rate, active, image_url, created_at, updated_at`,
 		id, tenantID,
 	)
 	p, err := scanProduct(row)
@@ -322,7 +369,7 @@ func scanProduct(row interface {
 		&p.ID, &p.TenantID, &p.Name,
 		&sku, &barcode, &description,
 		&p.CategoryID,
-		&p.IsFiscal, &p.FiscalPrice, &p.InternalPrice, &p.TaxRate,
+		&p.IsFiscal, &p.FiscalPrice, &p.InternalPrice, &p.PriceUSD, &p.TaxRate,
 		&p.Active, &imageURL, &createdAt, &updatedAt,
 	)
 	if err != nil {
@@ -351,7 +398,7 @@ func (s *ProductService) SetImageURL(ctx context.Context, tenantID, id uuid.UUID
 		UPDATE products SET image_url = $3, updated_at = NOW()
 		WHERE id = $1 AND tenant_id = $2
 		RETURNING id, tenant_id, name, sku, barcode, description, category_id,
-		          is_fiscal, fiscal_price, internal_price, tax_rate, active, image_url, created_at, updated_at`,
+		          is_fiscal, fiscal_price, internal_price, price_usd, tax_rate, active, image_url, created_at, updated_at`,
 		id, tenantID, imageURL,
 	)
 	p, err := scanProduct(row)
@@ -370,7 +417,7 @@ func (s *ProductService) ClearImageURL(ctx context.Context, tenantID, id uuid.UU
 		UPDATE products SET image_url = NULL, updated_at = NOW()
 		WHERE id = $1 AND tenant_id = $2
 		RETURNING id, tenant_id, name, sku, barcode, description, category_id,
-		          is_fiscal, fiscal_price, internal_price, tax_rate, active, image_url, created_at, updated_at`,
+		          is_fiscal, fiscal_price, internal_price, price_usd, tax_rate, active, image_url, created_at, updated_at`,
 		id, tenantID,
 	)
 	p, err := scanProduct(row)

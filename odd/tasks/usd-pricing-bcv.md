@@ -24,12 +24,12 @@ El cliente pidió: cargar un producto con su precio en dólares, y que el equiva
 
 ## Tasks
 
-- [ ] T1 — Migration: `products.price_usd NUMERIC(12,2) NULL`
-- [ ] T2 — Servicio compartido para resolver la tasa más reciente de un tenant (reusa `exchange_rates` + `BCVFetcher`, sin duplicar la lógica ya construida en `CashSessionService`)
-- [ ] T3 — `ProductService.Create/Update`: aceptar `price_usd`, calcular `internal_price` al guardar
-- [ ] T4 — Recalcular `internal_price` de todos los productos con `price_usd` cada vez que se registra una tasa nueva (hook en el mismo punto donde `CashSessionService` graba en `exchange_rates`)
+- [x] T1 — Migration: `products.price_usd NUMERIC(12,2) NULL`
+- [x] T2 — Servicio compartido para resolver la tasa más reciente de un tenant (reusa `exchange_rates` + `BCVFetcher`, sin duplicar la lógica ya construida en `CashSessionService`)
+- [x] T3 — `ProductService.Create/Update`: aceptar `price_usd`, calcular `internal_price` al guardar
+- [x] T4 — Recalcular `internal_price` de todos los productos con `price_usd` cada vez que se registra una tasa nueva (hook en el mismo punto donde `CashSessionService` graba en `exchange_rates`)
 - [ ] T5 — Frontend: campo "Precio en USD" en `ProductFormModal.vue`, `internal_price` read-only/calculado cuando `price_usd` está seteado
-- [ ] T6 — Tests (Go contra Postgres real, siguiendo el mismo patrón `TEST_DATABASE_URL` que el resto del repo)
+- [x] T6 — Tests (Go contra Postgres real, siguiendo el mismo patrón `TEST_DATABASE_URL` que el resto del repo)
 
 ## Constraints
 
@@ -50,3 +50,20 @@ El cliente pidió: cargar un producto con su precio en dólares, y que el equiva
 ## Progress
 
 - 2026-11-14: Documento creado. Confirmado con el usuario que la carga "por lote" ya está cubierta por `/inventory/adjustments` (campo `delta`); el trabajo real es la conversión USD→BS automática.
+- 2026-11-14: T1, T2, T3, T4, T6 implementados en el backend Go.
+  - **T1**: `apps/api/migrations/000021_products_price_usd.{up,down}.sql` — agrega `products.price_usd NUMERIC(12,2)` nullable (siguiente número tras `000020`).
+  - **T2**: `apps/api/internal/app/exchange_rate_resolver.go` — nuevo archivo con `fetchRate` (único call site de `exchangerate.Fetcher.FetchRate` en todo el código) y `currentExchangeRate` (busca la tasa más reciente en `exchange_rates`; si no existe ninguna, cae al fetcher sin persistir). `CashSessionService.CurrentRate` y `CashSessionService.resolveRate` fueron refactorizados para enrutar por ahí; `ProductService` también lo usa.
+  - **T3**: `CreateProductRequest`/`UpdateProductRequest` (`apps/api/internal/app/product_service.go`) ganaron `PriceUSD *float64`; `ProductService.Create/Update` calculan `internal_price = price_usd * tasa_actual` antes de insertar/actualizar cuando `PriceUSD != nil` (vía `resolveUSDPrice`), ignorando cualquier `InternalPrice` pasado manualmente en ese caso. `ProductService` ahora recibe un `exchangerate.Fetcher` en su constructor (`NewProductService(pool, fetcher)`); `product.Product` ganó el campo `PriceUSD`; `product_handler.go` (DTOs de request/response) y `router.go` (`handler.NewProductHandler(cfg.Pool, exchangerate.NewBCVFetcher(""))`) actualizados en consecuencia.
+  - **T4**: `CashSessionService.upsertRateAndRecomputeUSDPrices` (reemplaza el upsert inline que antes vivía en `Open`) envuelve el upsert de `exchange_rates` y el `UPDATE products SET internal_price = price_usd * $rate ... WHERE price_usd IS NOT NULL` en una única transacción pgx (`pool.Begin`/`Commit`) — sin cron ni job en background, igual en la rama auto y en la manual.
+  - **T6**: `apps/api/internal/app/product_service_test.go` (nuevo) — cubre: crear con `price_usd=1` y tasa 45 → `internal_price=45`; crear sin `price_usd` se comporta exactamente igual que antes (usa un fetcher que falla si se invoca, para probar que ni se toca); actualizar con `price_usd` recalcula `internal_price`; abrir caja con una tasa nueva recalcula solo los productos con `price_usd` seteado y deja intacto el de precio manual. Todos gated con `t.Skip` si `TEST_DATABASE_URL` no está seteada, igual que `cash_session_service_test.go`.
+  - **Verificación ejecutada** (Docker no disponible en esta máquina — `docker info` falló con "Cannot connect to the Docker daemon"; por lo tanto las aserciones contra DB real en T6 no se ejecutaron, solo compilaron y el `t.Skip` se activó correctamente):
+    - `cd apps/api && go build ./...` → **PASS** (sin output)
+    - `cd apps/api && go vet ./...` → **PASS** (sin output)
+    - `cd apps/api && gofmt -l .` → **PASS** (sin output)
+    - `cd apps/api && go test ./internal/app/... ./internal/domain/product/... ./internal/adapter/http/handler/...` → **PASS**:
+      ```
+      ok  	github.com/danzt/daas/api/internal/app	0.474s
+      ok  	github.com/danzt/daas/api/internal/domain/product	0.404s
+      ok  	github.com/danzt/daas/api/internal/adapter/http/handler	0.430s
+      ```
+    - `go test ./...` (módulo completo) → **PASS**, sin romper ningún paquete existente.

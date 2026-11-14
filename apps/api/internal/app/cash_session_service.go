@@ -59,19 +59,9 @@ func (s *CashSessionService) Open(ctx context.Context, tenantID uuid.UUID, opene
 		return nil, err
 	}
 
-	today := time.Now().UTC().Format("2006-01-02")
-	// ON CONFLICT DO NOTHING: a rate already recorded today wins over the one
-	// just fetched/entered. RETURNING the final row keeps the session in sync
-	// with whichever rate actually got persisted for the day.
-	err = s.pool.QueryRow(ctx,
-		`INSERT INTO exchange_rates (tenant_id, rate_date, rate, source)
-		 VALUES ($1, $2, $3, $4)
-		 ON CONFLICT (tenant_id, rate_date) DO UPDATE SET tenant_id = exchange_rates.tenant_id
-		 RETURNING rate, source`,
-		tenantID, today, rate, source,
-	).Scan(&rate, &source)
+	rate, source, err = s.upsertRateAndRecomputeUSDPrices(ctx, tenantID, rate, source)
 	if err != nil {
-		return nil, fmt.Errorf("upsert exchange rate: %w", err)
+		return nil, err
 	}
 
 	sess := &cashsession.CashSession{
@@ -154,12 +144,62 @@ func (s *CashSessionService) GetOpen(ctx context.Context, tenantID uuid.UUID) (*
 // manualRate (required) on fetch failure.
 func (s *CashSessionService) resolveRate(ctx context.Context, manualRate *float64) (float64, cashsession.RateSource, error) {
 	if manualRate == nil {
-		if rate, err := s.fetcher.FetchRate(ctx); err == nil && rate > 0 {
+		if rate, err := fetchRate(ctx, s.fetcher); err == nil {
 			return rate, cashsession.RateSourceAuto, nil
 		}
 		return 0, "", cashsession.ErrRateRequired
 	}
 	return *manualRate, cashsession.RateSourceManual, nil
+}
+
+// CurrentRate returns the tenant's current BS/USD exchange rate: the most
+// recently recorded row in exchange_rates, or — if none exists yet — a
+// best-effort fetch from the injected fetcher (not persisted here). Used by
+// ProductService to price a product in USD immediately on create/update,
+// without waiting for the next cash-session open.
+func (s *CashSessionService) CurrentRate(ctx context.Context, tenantID uuid.UUID) (float64, error) {
+	return currentExchangeRate(ctx, s.pool, s.fetcher, tenantID)
+}
+
+// upsertRateAndRecomputeUSDPrices persists the resolved rate for today's date
+// (ON CONFLICT DO NOTHING semantics — a rate already recorded today wins over
+// the one just fetched/entered) and, in the SAME transaction, recomputes
+// internal_price for every USD-priced product of the tenant against the rate
+// that actually ended up persisted. This single inline UPDATE is the entire
+// auto-recompute mechanism — no cron, no background worker.
+func (s *CashSessionService) upsertRateAndRecomputeUSDPrices(
+	ctx context.Context, tenantID uuid.UUID, rate float64, source cashsession.RateSource,
+) (float64, cashsession.RateSource, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, "", fmt.Errorf("begin exchange rate tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	today := time.Now().UTC().Format("2006-01-02")
+	err = tx.QueryRow(ctx,
+		`INSERT INTO exchange_rates (tenant_id, rate_date, rate, source)
+		 VALUES ($1, $2, $3, $4)
+		 ON CONFLICT (tenant_id, rate_date) DO UPDATE SET tenant_id = exchange_rates.tenant_id
+		 RETURNING rate, source`,
+		tenantID, today, rate, source,
+	).Scan(&rate, &source)
+	if err != nil {
+		return 0, "", fmt.Errorf("upsert exchange rate: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx,
+		`UPDATE products SET internal_price = price_usd * $2, updated_at = NOW()
+		 WHERE tenant_id = $1 AND price_usd IS NOT NULL`,
+		tenantID, rate,
+	); err != nil {
+		return 0, "", fmt.Errorf("recompute usd product prices: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return 0, "", fmt.Errorf("commit exchange rate tx: %w", err)
+	}
+	return rate, source, nil
 }
 
 func (s *CashSessionService) resolveUserID(ctx context.Context, tenantID uuid.UUID, supabaseUID string) (uuid.UUID, error) {

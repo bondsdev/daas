@@ -128,7 +128,7 @@ func (s *TenantService) createTenantDB(ctx context.Context, tx pgx.Tx, req Regis
          ),
          inserted AS (
              INSERT INTO tenants (id, name, fiscal_id, country_code, slug)
-             SELECT id, $1, $2, $3, generate_tenant_slug($1, id)
+             SELECT id, $1::varchar, $2, $3, generate_tenant_slug($1::text, id)
              FROM new_id
              RETURNING id, name, fiscal_id, country_code, status, created_at, updated_at
          )

@@ -47,6 +47,37 @@ type InternalInvoice struct {
 	CreatedAt        time.Time      `json:"created_at"`
 	UpdatedAt        time.Time      `json:"updated_at"`
 	Lines            []InvoiceLine  `json:"lines"`
+
+	// POS counter-sale fields — nil/empty for invoices created outside the POS flow.
+	CashSessionID *uuid.UUID    `json:"cash_session_id,omitempty"`
+	PaymentMethod PaymentMethod `json:"payment_method,omitempty"`
+	Currency      string        `json:"currency,omitempty"`
+}
+
+// PaymentMethod is how a POS counter sale was paid, matching the
+// payment_method_type Postgres enum.
+type PaymentMethod string
+
+const (
+	PaymentMethodCash          PaymentMethod = "cash"
+	PaymentMethodCard          PaymentMethod = "card"
+	PaymentMethodMobilePayment PaymentMethod = "mobile_payment"
+)
+
+// PosSaleLine is one product line in a POS quick sale. Unit price is not
+// supplied by the caller — it is resolved server-side from the product's
+// current internal price, same as a regular internal invoice line.
+type PosSaleLine struct {
+	ProductID uuid.UUID
+	Quantity  float64
+}
+
+// PosSaleRequest is the input for a POS counter sale: product + quantity
+// lines, a payment method, and the currency the sale was charged in.
+type PosSaleRequest struct {
+	Lines         []PosSaleLine
+	PaymentMethod PaymentMethod
+	Currency      string // defaults to "VES" when empty
 }
 
 // InvoiceLine is a single product line inside an invoice.
@@ -111,4 +142,5 @@ var (
 	ErrFiscalProductForbidden  = errors.New("fiscal products cannot be added to an internal invoice")
 	ErrEmptyInvoice            = errors.New("invoice must have at least one line")
 	ErrInvoiceNotDraft         = errors.New("invoice is not in draft status")
+	ErrInsufficientStock       = errors.New("insufficient stock for one or more products")
 )

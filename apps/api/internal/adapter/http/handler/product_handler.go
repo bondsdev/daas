@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/labstack/echo/v4"
 
+	"github.com/danzt/daas/api/internal/adapter/exchangerate"
 	"github.com/danzt/daas/api/internal/adapter/http/middleware"
 	"github.com/danzt/daas/api/internal/adapter/storage"
 	"github.com/danzt/daas/api/internal/app"
@@ -33,8 +34,10 @@ func (h *ProductHandler) SetStorage(st storage.Storage) {
 }
 
 // NewProductHandler creates a ProductHandler backed by the given service.
-func NewProductHandler(pool *pgxpool.Pool) *ProductHandler {
-	return &ProductHandler{service: app.NewProductService(pool)}
+// fetcher is used to resolve a USD-priced product's internal_price when the
+// tenant has no exchange_rates row recorded yet.
+func NewProductHandler(pool *pgxpool.Pool, fetcher exchangerate.Fetcher) *ProductHandler {
+	return &ProductHandler{service: app.NewProductService(pool, fetcher)}
 }
 
 // ----- Request / Response types -----
@@ -48,6 +51,7 @@ type createProductRequest struct {
 	IsFiscal      bool       `json:"is_fiscal"`
 	FiscalPrice   *float64   `json:"fiscal_price,omitempty"`
 	InternalPrice *float64   `json:"internal_price,omitempty"`
+	PriceUSD      *float64   `json:"price_usd,omitempty"`
 	TaxRate       *float64   `json:"tax_rate,omitempty"`
 }
 
@@ -59,6 +63,7 @@ type updateProductRequest struct {
 	CategoryID    *uuid.UUID `json:"category_id,omitempty"`
 	FiscalPrice   *float64   `json:"fiscal_price,omitempty"`
 	InternalPrice *float64   `json:"internal_price,omitempty"`
+	PriceUSD      *float64   `json:"price_usd,omitempty"`
 	TaxRate       *float64   `json:"tax_rate,omitempty"`
 }
 
@@ -78,6 +83,7 @@ type productResponse struct {
 	IsFiscal      bool       `json:"is_fiscal"`
 	FiscalPrice   *float64   `json:"fiscal_price,omitempty"`
 	InternalPrice *float64   `json:"internal_price,omitempty"`
+	PriceUSD      *float64   `json:"price_usd,omitempty"`
 	TaxRate       *float64   `json:"tax_rate,omitempty"`
 	Active        bool       `json:"active"`
 	ImageURL      string     `json:"image_url,omitempty"`
@@ -112,6 +118,7 @@ func toProductResponse(p *product.Product) productResponse {
 		IsFiscal:      p.IsFiscal,
 		FiscalPrice:   p.FiscalPrice,
 		InternalPrice: p.InternalPrice,
+		PriceUSD:      p.PriceUSD,
 		TaxRate:       p.TaxRate,
 		Active:        p.Active,
 		ImageURL:      p.ImageURL,
@@ -254,6 +261,7 @@ func (h *ProductHandler) CreateProduct(c echo.Context) error {
 		IsFiscal:      req.IsFiscal,
 		FiscalPrice:   req.FiscalPrice,
 		InternalPrice: req.InternalPrice,
+		PriceUSD:      req.PriceUSD,
 		TaxRate:       req.TaxRate,
 	})
 	if err != nil {
@@ -294,6 +302,7 @@ func (h *ProductHandler) UpdateProduct(c echo.Context) error {
 		CategoryID:    req.CategoryID,
 		FiscalPrice:   req.FiscalPrice,
 		InternalPrice: req.InternalPrice,
+		PriceUSD:      req.PriceUSD,
 		TaxRate:       req.TaxRate,
 	})
 	if err != nil {

@@ -111,7 +111,7 @@ func NewRouterWithConfig(cfg RouterConfig) *echo.Echo { //nolint:funlen,cyclop
 	userHandler := handler.NewUserHandler(cfg.Pool, cfg.SupabaseURL, cfg.ServiceRoleKey)
 	integrationHandler := handler.NewIntegrationHandler(cfg.Pool)
 	meHandler := handler.NewMeHandler(cfg.Pool)
-	productHandler := handler.NewProductHandler(cfg.Pool)
+	productHandler := handler.NewProductHandler(cfg.Pool, exchangerate.NewBCVFetcher(""))
 	if cfg.Storage != nil {
 		productHandler.SetStorage(cfg.Storage)
 	}

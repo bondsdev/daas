@@ -13,6 +13,7 @@ export interface Product {
   is_fiscal: boolean;
   fiscal_price?: number;
   internal_price?: number;
+  price_usd?: number;
   tax_rate?: number;
   active: boolean;
   image_url?: string;
@@ -55,7 +56,17 @@ const active = ref(true);
 const isFiscal = ref(false);
 const fiscalPrice = ref<string>("");
 const internalPrice = ref<string>("");
+const priceUsd = ref<string>("");
 const taxRate = ref<string>("");
+
+// True when the USD price field holds a valid, positive value — in that
+// case internal_price is a system-computed value (BCV rate), not editable.
+const usdPriceActive = computed(() => {
+  const trimmed = priceUsd.value.trim();
+  if (!trimmed) return false;
+  const n = parseFloat(trimmed);
+  return !isNaN(n) && n > 0;
+});
 
 // Error state
 const errors = ref<Record<string, string>>({});
@@ -92,6 +103,7 @@ function resetForm() {
     isFiscal.value = props.product.is_fiscal;
     fiscalPrice.value = props.product.fiscal_price?.toString() ?? "";
     internalPrice.value = props.product.internal_price?.toString() ?? "";
+    priceUsd.value = props.product.price_usd?.toString() ?? "";
     taxRate.value = props.product.tax_rate?.toString() ?? "";
     existingImageURL.value = props.product.image_url ?? "";
   } else {
@@ -104,6 +116,7 @@ function resetForm() {
     isFiscal.value = false;
     fiscalPrice.value = "";
     internalPrice.value = "";
+    priceUsd.value = "";
     taxRate.value = "";
     existingImageURL.value = "";
   }
@@ -124,6 +137,7 @@ watch(
 watch(isFiscal, () => {
   fiscalPrice.value = "";
   internalPrice.value = "";
+  priceUsd.value = "";
   taxRate.value = "";
   errors.value = {};
 });
@@ -144,10 +158,18 @@ function validate(): boolean {
       errs.taxRate = "Selecciona la tasa de IVA";
     }
   } else {
-    const price = parseFloat(internalPrice.value);
-    if (!internalPrice.value || isNaN(price) || price <= 0) {
-      errs.internalPrice =
-        "El precio interno es obligatorio y debe ser mayor a 0";
+    const usdRaw = priceUsd.value.trim();
+    if (usdRaw) {
+      const usd = parseFloat(usdRaw);
+      if (isNaN(usd) || usd <= 0) {
+        errs.priceUsd = "El precio en USD debe ser mayor a 0";
+      }
+    } else {
+      const price = parseFloat(internalPrice.value);
+      if (!internalPrice.value || isNaN(price) || price <= 0) {
+        errs.internalPrice =
+          "El precio interno es obligatorio y debe ser mayor a 0";
+      }
     }
   }
 
@@ -224,7 +246,17 @@ async function handleSave() {
       body.fiscal_price = parseFloat(fiscalPrice.value);
       body.tax_rate = parseFloat(taxRate.value);
     } else {
-      body.internal_price = parseFloat(internalPrice.value);
+      const usdRaw = priceUsd.value.trim();
+      if (usdRaw) {
+        // internal_price is computed server-side from price_usd and the
+        // tenant's current BCV rate — omit it so the backend's calculated
+        // value is never overridden by a stale/manual number here.
+        body.price_usd = parseFloat(usdRaw);
+      } else {
+        // No USD price: internal_price goes back to being a plain manual
+        // value, and price_usd is omitted so the backend clears it.
+        body.internal_price = parseFloat(internalPrice.value);
+      }
     }
 
     let savedProductId: string;
@@ -453,31 +485,68 @@ function handleClose() {
             </div>
           </div>
 
-          <div v-else>
-            <label
-              for="internal-price"
-              class="block text-sm font-semibold text-foreground mb-1.5"
-            >
-              Precio interno <span class="text-red-500">*</span>
-            </label>
-            <input
-              id="internal-price"
-              v-model="internalPrice"
-              type="number"
-              min="0"
-              step="0.01"
-              placeholder="0.00"
-              :class="[
-                'w-full h-11 px-4 border rounded-lg text-base transition-all duration-200',
-                'focus:outline-none focus:ring-2 placeholder:text-muted-foreground',
-                errors.internalPrice
-                  ? 'border-red-400 focus:border-red-400 focus:ring-red-200'
-                  : 'border-input focus:border-primary focus:ring-primary/20',
-              ]"
-            />
-            <p v-if="errors.internalPrice" class="mt-1 text-xs text-red-500">
-              {{ errors.internalPrice }}
-            </p>
+          <div v-else class="grid grid-cols-2 gap-4">
+            <div>
+              <label
+                for="internal-price"
+                class="block text-sm font-semibold text-foreground mb-1.5"
+              >
+                Precio interno
+                <span v-if="!usdPriceActive" class="text-red-500">*</span>
+              </label>
+              <input
+                id="internal-price"
+                v-model="internalPrice"
+                type="number"
+                min="0"
+                step="0.01"
+                placeholder="0.00"
+                :disabled="usdPriceActive"
+                :class="[
+                  'w-full h-11 px-4 border rounded-lg text-base transition-all duration-200',
+                  'focus:outline-none focus:ring-2 placeholder:text-muted-foreground',
+                  'disabled:bg-gray-50 disabled:text-muted-foreground disabled:cursor-not-allowed',
+                  errors.internalPrice
+                    ? 'border-red-400 focus:border-red-400 focus:ring-red-200'
+                    : 'border-input focus:border-primary focus:ring-primary/20',
+                ]"
+              />
+              <p v-if="errors.internalPrice" class="mt-1 text-xs text-red-500">
+                {{ errors.internalPrice }}
+              </p>
+              <p
+                v-if="usdPriceActive"
+                class="mt-1 text-xs text-muted-foreground"
+              >
+                Se calcula con la tasa del día (BCV) al guardar.
+              </p>
+            </div>
+            <div>
+              <label
+                for="price-usd"
+                class="block text-sm font-semibold text-foreground mb-1.5"
+              >
+                Precio en USD
+              </label>
+              <input
+                id="price-usd"
+                v-model="priceUsd"
+                type="number"
+                min="0"
+                step="0.01"
+                placeholder="0.00 (opcional)"
+                :class="[
+                  'w-full h-11 px-4 border rounded-lg text-base transition-all duration-200',
+                  'focus:outline-none focus:ring-2 placeholder:text-muted-foreground',
+                  errors.priceUsd
+                    ? 'border-red-400 focus:border-red-400 focus:ring-red-200'
+                    : 'border-input focus:border-primary focus:ring-primary/20',
+                ]"
+              />
+              <p v-if="errors.priceUsd" class="mt-1 text-xs text-red-500">
+                {{ errors.priceUsd }}
+              </p>
+            </div>
           </div>
 
           <!-- Category -->

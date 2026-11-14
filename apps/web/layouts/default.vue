@@ -7,6 +7,8 @@ import {
   FileText,
   Truck,
   BarChart2,
+  Wallet,
+  ScanLine,
   Settings,
   LogOut,
   ChevronRight,
@@ -86,6 +88,16 @@ const sidebarItems: NavGroup[] = [
     id: 3,
     label: "Ventas",
     items: [
+      {
+        title: "Caja",
+        url: "/cash-sessions",
+        icon: Wallet,
+      },
+      {
+        title: "Vender",
+        url: "/pos",
+        icon: ScanLine,
+      },
       {
         title: "Órdenes de venta",
         url: "/sales-orders",

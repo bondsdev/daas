@@ -61,6 +61,28 @@ type StockItem struct {
 	Active         bool    `json:"active"`
 }
 
+// ─── Cash Session Summary ─────────────────────────────────────────────────────
+
+// CashSessionSummary is the cash-register close summary for one session:
+// totals in both currencies, breakdown by payment method, products sold, and
+// the remaining inventory.
+type CashSessionSummary struct {
+	TotalBS            float64              `json:"total_bs"`
+	TotalUSD           float64              `json:"total_usd"`
+	SaleCount          int                  `json:"sale_count"`
+	CustomerCount      int                  `json:"customer_count"`
+	ByPaymentMethod    []PaymentMethodTotal `json:"by_payment_method"`
+	ProductsSold       []ProductRevenue     `json:"products_sold"`
+	InventoryRemaining *InventorySnapshot   `json:"inventory_remaining"`
+}
+
+// PaymentMethodTotal is revenue aggregated by payment method within a cash session.
+type PaymentMethodTotal struct {
+	Method string  `json:"method"`
+	Total  float64 `json:"total"`
+	Count  int     `json:"count"`
+}
+
 // ─── Purchases Report ─────────────────────────────────────────────────────────
 
 // PurchaseSummary aggregates purchase order data over a period.
@@ -97,4 +119,34 @@ type PurchaseInvoiceEntry struct {
 	TaxBase      float64   `json:"tax_base"`
 	TaxAmount    float64   `json:"tax_amount"`
 	Total        float64   `json:"total"`
+}
+
+// ─── Sales Book ────────────────────────────────────────────────────────────
+
+// SalesBookSummary is the libro de ventas: every issued sales document
+// (internal + fiscal) in a period, as the accountant needs to see all of it.
+type SalesBookSummary struct {
+	From         time.Time `json:"from"`
+	To           time.Time `json:"to"`
+	TotalTaxBase float64   `json:"total_tax_base"`
+	// Named TaxDebit, not TaxCredit like the purchase side: IVA collected on a
+	// sale is owed to the fisco (a debit), while IVA paid on a purchase is a
+	// credit against that debit — they are opposite sides of the same ledger.
+	TotalTaxDebit float64          `json:"total_tax_debit"`
+	TotalRevenue  float64          `json:"total_revenue"`
+	DocumentCount int              `json:"document_count"`
+	Entries       []SalesBookEntry `json:"entries"`
+}
+
+// SalesBookEntry is one line of the libro de ventas, from either an internal
+// (non-fiscal) invoice or a fiscal invoice.
+type SalesBookEntry struct {
+	Date             time.Time `json:"date"`
+	DocumentType     string    `json:"document_type"` // "internal" | "fiscal"
+	DocumentNumber   string    `json:"document_number"`
+	CustomerName     string    `json:"customer_name"`
+	CustomerIDNumber string    `json:"customer_id_number"`
+	TaxBase          float64   `json:"tax_base"`
+	TaxAmount        float64   `json:"tax_amount"`
+	Total            float64   `json:"total"`
 }

@@ -41,10 +41,36 @@ type Rider struct {
 
 // CreateRiderRequest is the input to register a new rider for a tenant.
 type CreateRiderRequest struct {
+	UserID                  uuid.UUID
 	Name                    string
 	Phone                   string
 	RatePerDelivery         float64
 	MaxConcurrentDeliveries int
+}
+
+// UpdateRiderRequest is the input to update an existing rider.
+// Full-replace semantics (matches this codebase's other UpdateXRequest types):
+// the caller must pass the full desired value for every field, not just the
+// one being changed.
+type UpdateRiderRequest struct {
+	Status                  Status
+	MaxConcurrentDeliveries int
+	RatePerDelivery         float64
+	Active                  bool
+}
+
+// Validate enforces input invariants on an update request.
+func (r *UpdateRiderRequest) Validate() error {
+	if r.MaxConcurrentDeliveries <= 0 {
+		return ErrInvalidMaxConcurrent
+	}
+	if r.RatePerDelivery < 0 {
+		return ErrInvalidRate
+	}
+	if r.Status != StatusAvailable && r.Status != StatusUnavailable {
+		return ErrInvalidStatus
+	}
+	return nil
 }
 
 // Validate enforces input invariants on a create request.
@@ -76,6 +102,9 @@ var (
 	ErrRiderNameRequired    = errors.New("rider name is required")
 	ErrInvalidMaxConcurrent = errors.New("max concurrent deliveries must be positive")
 	ErrInvalidRate          = errors.New("rate per delivery must not be negative")
+	ErrInvalidStatus        = errors.New("invalid rider status")
 	ErrRiderUnavailable     = errors.New("rider is unavailable")
 	ErrRiderAtCapacity      = errors.New("rider is at maximum concurrent deliveries")
+	ErrDeliveryNotEnabled   = errors.New("delivery is not enabled for this tenant")
+	ErrNoEligibleRider      = errors.New("no eligible rider available for auto-assignment")
 )

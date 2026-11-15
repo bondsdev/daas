@@ -290,6 +290,73 @@ func (s *RiderService) MarkRiderPaid(ctx context.Context, tenantID, orderID uuid
 	return s.loadOrderDeliveryState(ctx, tenantID, orderID)
 }
 
+// GetRiderBySupabaseUID resolves the rider record owned by the authenticated
+// user (matched via tenant_users.supabase_uid). Used by HTTP handlers to let
+// a rider act on their own deliveries without exposing their riders.id.
+func (s *RiderService) GetRiderBySupabaseUID(ctx context.Context, tenantID uuid.UUID, supabaseUID string) (*rider.Rider, error) {
+	row := s.pool.QueryRow(ctx, `
+		SELECT r.id, r.tenant_id, r.user_id, r.name, COALESCE(r.phone, ''), r.rate_per_delivery,
+		       r.status, r.max_concurrent_deliveries, r.last_assigned_at, r.active, r.created_at, r.updated_at
+		FROM riders r
+		JOIN tenant_users tu ON tu.id = r.user_id
+		WHERE r.tenant_id = $1 AND tu.supabase_uid = $2`,
+		tenantID, supabaseUID,
+	)
+	r, err := scanRider(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, rider.ErrRiderNotFound
+		}
+		return nil, fmt.Errorf("get rider by supabase uid: %w", err)
+	}
+	return r, nil
+}
+
+// GetOrderDeliveryState exposes the delivery-relevant subset of a shop order
+// (status, rider assignment, urgent flag) for callers that need to inspect
+// it without mutating anything, e.g. an authorization check.
+func (s *RiderService) GetOrderDeliveryState(ctx context.Context, tenantID, orderID uuid.UUID) (*shop.ShopOrder, error) {
+	return s.loadOrderDeliveryState(ctx, tenantID, orderID)
+}
+
+// ListMyDeliveries returns the delivery-relevant subset of orders assigned to
+// the given rider, urgent first then oldest-assigned first.
+func (s *RiderService) ListMyDeliveries(ctx context.Context, tenantID, riderID uuid.UUID) ([]shop.ShopOrder, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, tenant_id, status,
+		       rider_id, rider_fee, rider_assigned_at, rider_delivered_at, rider_paid_at,
+		       is_urgent, urgent_fee
+		FROM shop_orders
+		WHERE tenant_id = $1 AND rider_id = $2
+		ORDER BY is_urgent DESC, rider_assigned_at ASC`,
+		tenantID, riderID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list my deliveries: %w", err)
+	}
+	defer rows.Close()
+
+	var orders []shop.ShopOrder
+	for rows.Next() {
+		var o shop.ShopOrder
+		if err := rows.Scan(
+			&o.ID, &o.TenantID, &o.Status,
+			&o.RiderID, &o.RiderFee, &o.RiderAssignedAt, &o.RiderDeliveredAt, &o.RiderPaidAt,
+			&o.IsUrgent, &o.UrgentFee,
+		); err != nil {
+			return nil, fmt.Errorf("scan my delivery: %w", err)
+		}
+		orders = append(orders, o)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("my deliveries rows: %w", err)
+	}
+	if orders == nil {
+		orders = []shop.ShopOrder{}
+	}
+	return orders, nil
+}
+
 // ─── Private helpers ──────────────────────────────────────────────────────────
 
 func (s *RiderService) deliveryEnabled(ctx context.Context, tenantID uuid.UUID) (bool, error) {

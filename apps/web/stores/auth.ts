@@ -9,7 +9,7 @@ export interface JwtPayload {
   exp: number;
   app_metadata: {
     tenant_id: string;
-    role: "owner" | "employee";
+    role: "owner" | "employee" | "rider";
   };
 }
 
@@ -17,7 +17,7 @@ export interface User {
   id: string;
   email: string;
   tenantId: string;
-  role: "owner" | "employee";
+  role: "owner" | "employee" | "rider";
 }
 
 export interface Tenant {
@@ -68,6 +68,7 @@ export const useAuthStore = defineStore("auth", () => {
   });
 
   const isOwner = computed(() => user.value?.role === "owner");
+  const isRider = computed(() => user.value?.role === "rider");
 
   const tenantId = computed(() => user.value?.tenantId ?? null);
 
@@ -230,6 +231,7 @@ export const useAuthStore = defineStore("auth", () => {
     tenant,
     isAuthenticated,
     isOwner,
+    isRider,
     tenantId,
     login,
     logout,

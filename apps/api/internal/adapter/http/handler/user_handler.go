@@ -6,26 +6,32 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/labstack/echo/v4"
+	"github.com/rs/zerolog/log"
 
 	mw "github.com/danzt/daas/api/internal/adapter/http/middleware"
+	"github.com/danzt/daas/api/internal/app"
 )
 
 // UserHandler handles user management endpoints.
 // All endpoints require JWT auth and operate within the tenant context.
 type UserHandler struct {
 	pool           *pgxpool.Pool
+	tenantSvc      *app.TenantService
 	supabaseURL    string
 	serviceRoleKey string
 	httpClient     *http.Client
 }
 
-// NewUserHandler creates a UserHandler.
-func NewUserHandler(pool *pgxpool.Pool, supabaseURL, serviceRoleKey string) *UserHandler {
+// NewUserHandler creates a UserHandler. tenantSvc is reused to set
+// app_metadata on invited users via the Supabase Admin API.
+func NewUserHandler(pool *pgxpool.Pool, tenantSvc *app.TenantService, supabaseURL, serviceRoleKey string) *UserHandler {
 	return &UserHandler{
 		pool:           pool,
+		tenantSvc:      tenantSvc,
 		supabaseURL:    supabaseURL,
 		serviceRoleKey: serviceRoleKey,
 		httpClient:     &http.Client{Timeout: 15 * time.Second},
@@ -147,6 +153,45 @@ func (h *UserHandler) Invite(c echo.Context) error {
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		return WriteProblem(c, http.StatusInternalServerError, "internal-error",
 			"failed to send invite via auth service")
+	}
+
+	var invited struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&invited); err != nil {
+		log.Error().Err(err).Str("email", req.Email).
+			Msg("invite: supabase user created but failed to decode response — manual follow-up needed")
+		return WriteProblem(c, http.StatusInternalServerError, "internal-error",
+			"invite partially succeeded: user created in auth but local setup failed; contact support")
+	}
+	supabaseUID, err := uuid.Parse(invited.ID)
+	if err != nil {
+		log.Error().Err(err).Str("email", req.Email).Str("raw_id", invited.ID).
+			Msg("invite: supabase user created but returned invalid UID — manual follow-up needed")
+		return WriteProblem(c, http.StatusInternalServerError, "internal-error",
+			"invite partially succeeded: user created in auth but local setup failed; contact support")
+	}
+	tenantUUID, err := uuid.Parse(tenantID)
+	if err != nil {
+		return WriteProblem(c, http.StatusInternalServerError, "internal-error", "invalid tenant context")
+	}
+
+	if err := h.tenantSvc.SetTenantMetadata(c.Request().Context(), supabaseUID, tenantUUID, role); err != nil {
+		log.Error().Err(err).Str("email", req.Email).Str("supabase_uid", invited.ID).
+			Msg("invite: supabase user created but app_metadata PATCH failed — manual follow-up needed")
+		return WriteProblem(c, http.StatusInternalServerError, "internal-error",
+			"invite partially succeeded: user created in auth but local setup failed; contact support")
+	}
+
+	if _, err := h.pool.Exec(c.Request().Context(),
+		`INSERT INTO tenant_users (tenant_id, supabase_uid, email, role)
+         VALUES ($1, $2, $3, $4)`,
+		tenantUUID, supabaseUID, req.Email, role,
+	); err != nil {
+		log.Error().Err(err).Str("email", req.Email).Str("supabase_uid", invited.ID).
+			Msg("invite: supabase user created and metadata set but tenant_users insert failed — manual follow-up needed")
+		return WriteProblem(c, http.StatusInternalServerError, "internal-error",
+			"invite partially succeeded: user created in auth but local setup failed; contact support")
 	}
 
 	return c.JSON(http.StatusOK, map[string]string{

@@ -71,7 +71,7 @@ Out of scope (later):
 
 - [x] T1 — Migration: `riders` table, `shop_orders` + `tenants` columns, `rider` role
       — Spec: this doc
-- [ ] T2 — Go domain: `Rider` entity, `ShopOrder` delivery fields/transitions
+- [x] T2 — Go domain: `Rider` entity, `ShopOrder` delivery fields/transitions
 - [ ] T3 — Go app service: rider CRUD, assign (manual/auto), mark delivered/urgent/paid
 - [ ] T4 — Go handlers + router: tenant-facing + rider-facing endpoints
 - [ ] T5 — Auth: `rider` role in JWT/middleware, RLS scoping riders to own orders
@@ -94,3 +94,7 @@ Out of scope (later):
   new `riders` table + RLS, `shop_orders` delivery columns). Committed as `8c4d7ff`.
   Could NOT run up/down against a real DB — Docker daemon was not running locally
   (no other migrate-up script/Makefile target found); `go build ./...` passes clean.
+- 2026-11-14: T2 done — `rider` domain package (`Rider`, `Status`, `CreateRiderRequest.Validate()`,
+  `HasCapacity()`) + `ShopOrder` delivery fields/errors. Committed as `cd23c1fa9fc1b6253f14f6143d874c13033dc0de`.
+  `go build ./...` clean; `go test ./internal/domain/rider/... ./internal/domain/shop/...`:
+  rider 11/11 pass, shop 23/23 pass.

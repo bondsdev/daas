@@ -37,7 +37,6 @@ export default defineNuxtConfig({
           sizes: "180x180",
           href: "/apple-touch-icon.png",
         },
-        { rel: "manifest", href: "/site.webmanifest" },
       ],
     },
   },
@@ -46,7 +45,40 @@ export default defineNuxtConfig({
     "@nuxtjs/tailwindcss",
     "shadcn-nuxt",
     "@nuxt/eslint",
+    ...(isCapacitorBuild ? [] : ["@vite-pwa/nuxt" as const]),
   ],
+  pwa: isCapacitorBuild
+    ? undefined
+    : {
+        registerType: "autoUpdate",
+        manifest: {
+          name: "DaaS — Gestión de inventario",
+          short_name: "DaaS",
+          description:
+            "Gestión de inventario multi-país con facturación fiscal y no fiscal.",
+          theme_color: "#7C3AED",
+          background_color: "#FAF5FF",
+          display: "standalone",
+          start_url: "/dashboard",
+          icons: [
+            {
+              src: "/android-chrome-192x192.png",
+              sizes: "192x192",
+              type: "image/png",
+            },
+            {
+              src: "/android-chrome-512x512.png",
+              sizes: "512x512",
+              type: "image/png",
+            },
+          ],
+        },
+        workbox: {
+          navigateFallback: "/dashboard",
+          globPatterns: ["**/*.{js,css,html,png,svg,ico}"],
+        },
+        devOptions: { enabled: false },
+      },
   shadcn: {
     prefix: "",
     componentDir: "./components/ui",

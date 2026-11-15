@@ -84,8 +84,11 @@ func (h *UserHandler) List(c echo.Context) error {
 }
 
 // inviteRequest is the JSON body for POST /api/v1/users/invite.
+// Role is optional: empty defaults to "employee". Only "employee" and
+// "rider" are invitable — "owner" is never assignable via invite.
 type inviteRequest struct {
 	Email string `json:"email"`
+	Role  string `json:"role,omitempty"`
 }
 
 // Invite handles POST /api/v1/users/invite.
@@ -105,10 +108,18 @@ func (h *UserHandler) Invite(c echo.Context) error {
 		return WriteProblem(c, http.StatusUnprocessableEntity, "validation-error", "email is required")
 	}
 
+	role := req.Role
+	if role == "" {
+		role = "employee"
+	}
+	if role != "employee" && role != "rider" {
+		return WriteProblem(c, http.StatusUnprocessableEntity, "validation-error", "role must be employee or rider")
+	}
+
 	// Call Supabase Admin API to send invite.
 	payload := map[string]interface{}{
 		"email": req.Email,
-		"data":  map[string]interface{}{"tenant_id": tenantID, "role": "employee"},
+		"data":  map[string]interface{}{"tenant_id": tenantID, "role": role},
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {

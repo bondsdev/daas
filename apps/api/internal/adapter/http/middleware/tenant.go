@@ -91,6 +91,26 @@ func (m *TenantMiddleware) Handle() echo.MiddlewareFunc {
 					"failed to set tenant context")
 			}
 
+			// Rider sessions additionally get app.rider_id set so the RLS
+			// backstop on shop_orders (migration 000023) can restrict them to
+			// their own deliveries. Owner/employee sessions never set this —
+			// current_setting('app.rider_id', true) stays NULL for them, which
+			// is how that policy tells a rider session apart from a staff one.
+			role, _ := c.Get(string(ContextKeyRole)).(string)
+			if role == "rider" {
+				supabaseUID, _ := c.Get(string(ContextKeySupabaseUID)).(string)
+				_, err = conn.Exec(c.Request().Context(),
+					`SELECT set_config('app.rider_id', (
+						SELECT r.id::text FROM riders r
+						JOIN tenant_users tu ON tu.id = r.user_id
+						WHERE r.tenant_id = $1 AND tu.supabase_uid = $2
+					), true)`, tenantID, supabaseUID)
+				if err != nil {
+					return problemJSON(c, http.StatusInternalServerError, "internal-error",
+						"failed to set rider context")
+				}
+			}
+
 			// Store the acquired connection on the context so handlers can use
 			// the same connection (and therefore the same session-scoped
 			// set_config value, which activates RLS).

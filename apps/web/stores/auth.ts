@@ -27,6 +27,7 @@ export interface Tenant {
   fiscalId?: string;
   slug: string;
   features: { storefront: boolean; fiscal_invoicing: boolean };
+  deliveryEnabled: boolean;
 }
 
 export interface RegisterPayload {
@@ -106,6 +107,7 @@ export const useAuthStore = defineStore("auth", () => {
         fiscal_id?: string;
         slug: string;
         features?: { storefront: boolean; fiscal_invoicing: boolean };
+        delivery_enabled?: boolean;
       }>(`${config.public.apiBase}/api/v1/tenants/me`, {
         headers: { Authorization: `Bearer ${accessToken.value}` },
       });
@@ -119,6 +121,7 @@ export const useAuthStore = defineStore("auth", () => {
           storefront: false,
           fiscal_invoicing: false,
         },
+        deliveryEnabled: data.delivery_enabled === true,
       };
     } catch (err: unknown) {
       const status =

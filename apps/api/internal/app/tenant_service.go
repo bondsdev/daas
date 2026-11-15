@@ -92,7 +92,7 @@ func (s *TenantService) Register(ctx context.Context, req RegisterRequest) (*Reg
 	}
 
 	// Step 3: set app_metadata.tenant_id on the Auth user so the JWT includes it.
-	if err := s.setTenantMetadata(ctx, supabaseUID, tenantRow.ID, "owner"); err != nil {
+	if err := s.SetTenantMetadata(ctx, supabaseUID, tenantRow.ID, "owner"); err != nil {
 		// If setting metadata fails we rollback DB — no orphan user with wrong state.
 		return nil, fmt.Errorf("set tenant metadata: %w", err)
 	}
@@ -226,10 +226,10 @@ type supabaseUpdateMetadataRequest struct {
 	AppMetadata map[string]any `json:"app_metadata"`
 }
 
-// setTenantMetadata calls PATCH /auth/v1/admin/users/{uid} to set the
+// SetTenantMetadata calls PATCH /auth/v1/admin/users/{uid} to set the
 // tenant_id and role in app_metadata. This causes the claim to appear in
 // subsequent JWTs issued by Supabase Auth for this user.
-func (s *TenantService) setTenantMetadata(ctx context.Context, uid uuid.UUID, tenantID uuid.UUID, role string) error {
+func (s *TenantService) SetTenantMetadata(ctx context.Context, uid uuid.UUID, tenantID uuid.UUID, role string) error {
 	meta := supabaseUpdateMetadataRequest{
 		AppMetadata: map[string]any{
 			"tenant_id": tenantID.String(),

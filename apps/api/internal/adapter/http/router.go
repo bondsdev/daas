@@ -108,7 +108,7 @@ func NewRouterWithConfig(cfg RouterConfig) *echo.Echo { //nolint:funlen,cyclop
 	tenantHandler := handler.NewTenantHandler(tenantSvc)
 
 	authHandler := handler.NewAuthHandler(cfg.SupabaseURL, cfg.AnonKey)
-	userHandler := handler.NewUserHandler(cfg.Pool, cfg.SupabaseURL, cfg.ServiceRoleKey)
+	userHandler := handler.NewUserHandler(cfg.Pool, tenantSvc, cfg.SupabaseURL, cfg.ServiceRoleKey)
 	integrationHandler := handler.NewIntegrationHandler(cfg.Pool)
 	meHandler := handler.NewMeHandler(cfg.Pool)
 	productHandler := handler.NewProductHandler(cfg.Pool, exchangerate.NewBCVFetcher(""))

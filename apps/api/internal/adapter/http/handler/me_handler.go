@@ -25,15 +25,16 @@ func NewMeHandler(pool *pgxpool.Pool) *MeHandler {
 
 // tenantMeResponse is the JSON shape returned by GET /api/v1/tenants/me.
 type tenantMeResponse struct {
-	ID            string          `json:"id"`
-	Name          string          `json:"name"`
-	FiscalID      string          `json:"fiscal_id"`
-	CountryCode   string          `json:"country_code"`
-	Status        string          `json:"status"`
-	CreatedAt     string          `json:"created_at"`
-	Slug          string          `json:"slug"`
-	Features      map[string]bool `json:"features"`
-	PosSearchMode string          `json:"pos_search_mode"`
+	ID              string          `json:"id"`
+	Name            string          `json:"name"`
+	FiscalID        string          `json:"fiscal_id"`
+	CountryCode     string          `json:"country_code"`
+	Status          string          `json:"status"`
+	CreatedAt       string          `json:"created_at"`
+	Slug            string          `json:"slug"`
+	Features        map[string]bool `json:"features"`
+	PosSearchMode   string          `json:"pos_search_mode"`
+	DeliveryEnabled bool            `json:"delivery_enabled"`
 }
 
 // GetMe handles GET /api/v1/tenants/me.
@@ -50,11 +51,11 @@ func (h *MeHandler) GetMe(c echo.Context) error {
 	var createdAt time.Time
 
 	err := h.pool.QueryRow(c.Request().Context(),
-		`SELECT id, name, fiscal_id, country_code, status, created_at, slug, pos_search_mode
+		`SELECT id, name, fiscal_id, country_code, status, created_at, slug, pos_search_mode, delivery_enabled
 		 FROM tenants
 		 WHERE id = $1`,
 		tenantID,
-	).Scan(&resp.ID, &resp.Name, &fiscalID, &resp.CountryCode, &resp.Status, &createdAt, &resp.Slug, &resp.PosSearchMode)
+	).Scan(&resp.ID, &resp.Name, &fiscalID, &resp.CountryCode, &resp.Status, &createdAt, &resp.Slug, &resp.PosSearchMode, &resp.DeliveryEnabled)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return WriteProblem(c, http.StatusNotFound, "tenant-not-found", "tenant not found")

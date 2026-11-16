@@ -6,13 +6,19 @@ name: Deploy to VPS (Dokploy)
 #   2. deploy — pide a Dokploy que reconstruya y redespliegue daas-api y
 #      daas-web desde este mismo commit.
 #
-# La base de datos (Supabase cloud) NO se toca acá — sigue migrando igual que
-# siempre (golang-migrate / Supabase MCP), por eso este workflow no tiene paso
-# de backup ni de migración.
+# La base de datos (Supabase cloud) se migra acá mismo, antes del deploy:
+#   migrate — corre `golang-migrate up` contra la DB real de producción. Si una
+#   migración falla, el deploy NO se dispara (verify -> migrate -> deploy).
 #
 # ── Secrets requeridos (Settings → Secrets and variables → Actions) ──
 #   DOKPLOY_URL      base del panel Dokploy, ej. https://dokploy.<ip-con-guiones>.sslip.io
 #   DOKPLOY_API_KEY  API key de Dokploy (Settings → Profile → API/CLI)
+#   DATABASE_URL     connection string de Supabase en modo SESIÓN (puerto 5432,
+#                    no el pooler de transacción 6543 — golang-migrate usa un
+#                    advisory lock que necesita una sesión estable; el pooler de
+#                    transacción puede reasignar la conexión entre el lock y el
+#                    unlock). Formato:
+#                    postgresql://postgres.<project-ref>:<db-password>@<pooler-host>:5432/postgres?sslmode=require
 #
 # ── Trigger ──
 # Push a `main` (igual que el auto-deploy de Render/Vercel de hoy). También se
@@ -64,9 +70,30 @@ jobs:
           go build ./...
           go vet ./...
 
+  migrate:
+    name: Migrate database (Supabase)
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+      - name: Install golang-migrate
+        run: go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@v4.18.1
+      - name: Run pending migrations against production
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DATABASE_URL:-}" ]; then
+            echo "::error::Falta el secret DATABASE_URL. Cargalo con: gh secret set DATABASE_URL"; exit 1
+          fi
+          migrate -path apps/api/migrations -database "$DATABASE_URL" up
+
   deploy:
     name: Deploy (Dokploy)
-    needs: verify
+    needs: migrate
     runs-on: ubuntu-latest
     steps:
       - name: Trigger Dokploy deploys

@@ -138,6 +138,7 @@ func NewRouterWithConfig(cfg RouterConfig) *echo.Echo { //nolint:funlen,cyclop
 	reportHandler := handler.NewReportHandler(cfg.Pool)
 	saleHandler := handler.NewSaleHandler(cfg.Pool)
 	cashSessionHandler := handler.NewCashSessionHandler(cfg.Pool)
+	exchangeRateHandler := handler.NewExchangeRateHandler(cfg.Pool)
 
 	// Build lifecycle email notifier from injected NotificationSvc.
 	// nil-safe: if the notification service is not configured, the notifier
@@ -157,7 +158,7 @@ func NewRouterWithConfig(cfg RouterConfig) *echo.Echo { //nolint:funlen,cyclop
 	pdfHandler := handler.NewPDFHandler(cfg.Pool, internalInvoiceSvc, fiscalInvoiceSvc)
 
 	// Routes
-	registerRoutes(e, authMW, cfg.Pool, tenantHandler, authHandler, userHandler, integrationHandler, meHandler, productHandler, inventoryHandler, invoiceHandler, fiscalInvoiceHandler, supplierHandler, reportHandler, saleHandler, shopOrderHandler, paymentMethodHandler, brandingHandler, dashboardHandler, pdfHandler, cashSessionHandler, posSaleHandler)
+	registerRoutes(e, authMW, cfg.Pool, tenantHandler, authHandler, userHandler, integrationHandler, meHandler, productHandler, inventoryHandler, invoiceHandler, fiscalInvoiceHandler, supplierHandler, reportHandler, saleHandler, shopOrderHandler, paymentMethodHandler, brandingHandler, dashboardHandler, pdfHandler, cashSessionHandler, posSaleHandler, exchangeRateHandler)
 
 	// Storefront public route group — no auth required.
 	// Rate limiter runs first (fast reject), then tenant resolver activates RLS.
@@ -248,6 +249,7 @@ func registerRoutes(
 	pdfHandler *handler.PDFHandler,
 	cashSessionHandler *handler.CashSessionHandler,
 	posSaleHandler *handler.PosSaleHandler,
+	exchangeRateHandler *handler.ExchangeRateHandler,
 ) {
 	// Health check — unauthenticated
 	e.GET("/health", healthHandler)
@@ -387,6 +389,9 @@ func registerRoutes(
 
 	// POS quick-sale — counter sale tied to the tenant's open cash session.
 	api.POST("/pos/sales", posSaleHandler.Create)
+
+	// Exchange rate — read-only access to the tenant's current BS/USD rate.
+	api.GET("/exchange-rate/current", exchangeRateHandler.Current)
 }
 
 // healthHandler responds with a simple status OK payload.

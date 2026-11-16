@@ -138,6 +138,7 @@ func NewRouterWithConfig(cfg RouterConfig) *echo.Echo { //nolint:funlen,cyclop
 	reportHandler := handler.NewReportHandler(cfg.Pool)
 	saleHandler := handler.NewSaleHandler(cfg.Pool)
 	cashSessionHandler := handler.NewCashSessionHandler(cfg.Pool)
+	riderHandler := handler.NewRiderHandler(cfg.Pool)
 
 	// Build lifecycle email notifier from injected NotificationSvc.
 	// nil-safe: if the notification service is not configured, the notifier
@@ -157,7 +158,7 @@ func NewRouterWithConfig(cfg RouterConfig) *echo.Echo { //nolint:funlen,cyclop
 	pdfHandler := handler.NewPDFHandler(cfg.Pool, internalInvoiceSvc, fiscalInvoiceSvc)
 
 	// Routes
-	registerRoutes(e, authMW, cfg.Pool, tenantHandler, authHandler, userHandler, integrationHandler, meHandler, productHandler, inventoryHandler, invoiceHandler, fiscalInvoiceHandler, supplierHandler, reportHandler, saleHandler, shopOrderHandler, paymentMethodHandler, brandingHandler, dashboardHandler, pdfHandler, cashSessionHandler, posSaleHandler)
+	registerRoutes(e, authMW, cfg.Pool, tenantHandler, authHandler, userHandler, integrationHandler, meHandler, productHandler, inventoryHandler, invoiceHandler, fiscalInvoiceHandler, supplierHandler, reportHandler, saleHandler, shopOrderHandler, paymentMethodHandler, brandingHandler, dashboardHandler, pdfHandler, cashSessionHandler, posSaleHandler, riderHandler)
 
 	// Storefront public route group — no auth required.
 	// Rate limiter runs first (fast reject), then tenant resolver activates RLS.
@@ -248,6 +249,7 @@ func registerRoutes(
 	pdfHandler *handler.PDFHandler,
 	cashSessionHandler *handler.CashSessionHandler,
 	posSaleHandler *handler.PosSaleHandler,
+	riderHandler *handler.RiderHandler,
 ) {
 	// Health check — unauthenticated
 	e.GET("/health", healthHandler)
@@ -387,6 +389,19 @@ func registerRoutes(
 
 	// POS quick-sale — counter sale tied to the tenant's open cash session.
 	api.POST("/pos/sales", posSaleHandler.Create)
+
+	// Delivery riders (motorizados) — management + delivery lifecycle (T4).
+	// Role gating (owner/employee vs rider) is done inline in RiderHandler —
+	// there's no existing non-owner-only role-guard middleware to mirror.
+	api.POST("/riders", riderHandler.CreateRider)
+	api.GET("/riders", riderHandler.ListRiders)
+	api.PATCH("/riders/:id", riderHandler.UpdateRider)
+	api.POST("/orders/:orderId/assign-rider", riderHandler.AssignRiderManual)
+	api.POST("/orders/:orderId/auto-assign-rider", riderHandler.AutoAssignRider)
+	api.POST("/orders/:orderId/mark-delivered", riderHandler.MarkDelivered)
+	api.PATCH("/orders/:orderId/urgent", riderHandler.MarkUrgent)
+	api.POST("/orders/:orderId/mark-rider-paid", riderHandler.MarkRiderPaid)
+	api.GET("/my-deliveries", riderHandler.MyDeliveries)
 }
 
 // healthHandler responds with a simple status OK payload.

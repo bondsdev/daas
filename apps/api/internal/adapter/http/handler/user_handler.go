@@ -90,8 +90,11 @@ func (h *UserHandler) List(c echo.Context) error {
 }
 
 // inviteRequest is the JSON body for POST /api/v1/users/invite.
+// Role is optional: empty defaults to "employee". Only "employee" and
+// "rider" are invitable — "owner" is never assignable via invite.
 type inviteRequest struct {
 	Email string `json:"email"`
+	Role  string `json:"role,omitempty"`
 }
 
 // Invite handles POST /api/v1/users/invite.
@@ -111,10 +114,18 @@ func (h *UserHandler) Invite(c echo.Context) error {
 		return WriteProblem(c, http.StatusUnprocessableEntity, "validation-error", "email is required")
 	}
 
+	role := req.Role
+	if role == "" {
+		role = "employee"
+	}
+	if role != "employee" && role != "rider" {
+		return WriteProblem(c, http.StatusUnprocessableEntity, "validation-error", "role must be employee or rider")
+	}
+
 	// Call Supabase Admin API to send invite.
 	payload := map[string]interface{}{
 		"email": req.Email,
-		"data":  map[string]interface{}{"tenant_id": tenantID, "role": "employee"},
+		"data":  map[string]interface{}{"tenant_id": tenantID, "role": role},
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -165,9 +176,7 @@ func (h *UserHandler) Invite(c echo.Context) error {
 		return WriteProblem(c, http.StatusInternalServerError, "internal-error", "invalid tenant context")
 	}
 
-	const inviteRole = "employee"
-
-	if err := h.tenantSvc.SetTenantMetadata(c.Request().Context(), supabaseUID, tenantUUID, inviteRole); err != nil {
+	if err := h.tenantSvc.SetTenantMetadata(c.Request().Context(), supabaseUID, tenantUUID, role); err != nil {
 		log.Error().Err(err).Str("email", req.Email).Str("supabase_uid", invited.ID).
 			Msg("invite: supabase user created but app_metadata PATCH failed — manual follow-up needed")
 		return WriteProblem(c, http.StatusInternalServerError, "internal-error",
@@ -177,7 +186,7 @@ func (h *UserHandler) Invite(c echo.Context) error {
 	if _, err := h.pool.Exec(c.Request().Context(),
 		`INSERT INTO tenant_users (tenant_id, supabase_uid, email, role)
          VALUES ($1, $2, $3, $4)`,
-		tenantUUID, supabaseUID, req.Email, inviteRole,
+		tenantUUID, supabaseUID, req.Email, role,
 	); err != nil {
 		log.Error().Err(err).Str("email", req.Email).Str("supabase_uid", invited.ID).
 			Msg("invite: supabase user created and metadata set but tenant_users insert failed — manual follow-up needed")

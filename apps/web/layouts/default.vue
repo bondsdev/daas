@@ -133,6 +133,12 @@ const sidebarItems: NavGroup[] = [
           { title: "Órdenes de compra", url: "/suppliers/purchase-orders" },
         ],
       },
+      {
+        title: "Motorizados",
+        url: "/riders",
+        icon: Truck,
+        featureGate: "delivery",
+      },
     ],
   },
   {
@@ -195,6 +201,8 @@ const roleLabel = computed(() =>
 const storefrontEnabled = computed(
   () => store.tenant?.features?.storefront === true,
 );
+
+const deliveryEnabled = computed(() => store.tenant?.deliveryEnabled === true);
 
 // Close the mobile drawer on navigation
 watch(
@@ -283,7 +291,8 @@ onMounted(() => {
               v-for="item in group.items"
               v-show="
                 !item.featureGate ||
-                (item.featureGate === 'storefront' && storefrontEnabled)
+                (item.featureGate === 'storefront' && storefrontEnabled) ||
+                (item.featureGate === 'delivery' && deliveryEnabled)
               "
               :key="item.url"
             >

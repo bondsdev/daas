@@ -19,8 +19,10 @@ import {
   CreditCard,
   Palette,
   Store,
+  DollarSign,
 } from "lucide-vue-next";
 import { useAuthStore } from "~/stores/auth";
+import { useApiFetch } from "~/composables/useAuth";
 
 const store = useAuthStore();
 const route = useRoute();
@@ -186,6 +188,27 @@ async function handleLogout() {
   await navigateTo("/auth/login");
 }
 
+// ─── Tasa BCV (nav widget) ──────────────────────────────────────────────
+// Always-on, independent of any open cash session — see odd/bcv-rate-global.
+interface CurrentExchangeRate {
+  rate: number;
+  rate_date?: string;
+  source?: "auto" | "manual";
+}
+const bcvRate = ref<number | null>(null);
+let bcvRateTimer: ReturnType<typeof setInterval> | undefined;
+
+async function loadBcvRate() {
+  try {
+    const res = await useApiFetch<CurrentExchangeRate>(
+      "/api/v1/exchange-rate/current",
+    );
+    bcvRate.value = res.rate;
+  } catch {
+    // ponytail: silent — a stale/missing nav widget isn't worth a toast
+  }
+}
+
 const userInitials = computed(() => {
   const email = store.user?.email ?? "";
   return email.slice(0, 2).toUpperCase();
@@ -213,6 +236,9 @@ watch(
 );
 
 onMounted(() => {
+  loadBcvRate();
+  bcvRateTimer = setInterval(loadBcvRate, 5 * 60 * 1000);
+
   // Open sidebar immediately on desktop — client-only layout, no SSR mismatch risk.
   // In mobile mode the sidebar is never shown, so we skip this entirely.
   if (!isMobile.value && window.innerWidth >= 1024) sidebarOpen.value = true;
@@ -230,6 +256,7 @@ onMounted(() => {
 
   onUnmounted(() => {
     window.removeEventListener("keydown", handleKeyboard);
+    clearInterval(bcvRateTimer);
   });
 });
 </script>
@@ -447,6 +474,14 @@ onMounted(() => {
             </button>
           </div>
           <div class="flex items-center gap-2">
+            <div
+              v-if="bcvRate !== null"
+              class="flex items-center gap-1 rounded-md border border-input bg-background px-2 h-7 text-xs font-medium text-foreground"
+              title="Tasa BCV del día"
+            >
+              <DollarSign class="size-3.5 text-primary" />
+              <span>{{ bcvRate.toFixed(2) }} Bs</span>
+            </div>
             <button
               type="button"
               class="inline-flex size-7 items-center justify-center rounded-md text-foreground hover:bg-accent transition-colors"

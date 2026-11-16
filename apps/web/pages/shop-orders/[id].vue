@@ -19,8 +19,14 @@ import {
   FileText,
   FileImage,
   Download,
+  Bike,
+  Zap,
+  DollarSign,
 } from "lucide-vue-next";
 import { useApiFetch } from "~/composables/useAuth";
+import { useAuthStore } from "~/stores/auth";
+import { Select } from "~/components/ui/select";
+import { Switch } from "~/components/ui/switch";
 
 definePageMeta({
   layout: "default",
@@ -74,11 +80,29 @@ interface ShopOrder {
   payment_proof_uploaded_at?: string;
   payment_method_id?: string;
   payment_reference?: string;
+  rider_id?: string;
+  rider_fee?: number;
+  rider_assigned_at?: string;
+  rider_delivered_at?: string;
+  rider_paid_at?: string;
+  is_urgent: boolean;
+  urgent_fee?: number;
+}
+
+interface Rider {
+  id: string;
+  name: string;
+  status: "available" | "unavailable";
+  active: boolean;
 }
 
 const { isMobile } = useMobileMode();
 const route = useRoute();
 const orderId = route.params.id as string;
+const authStore = useAuthStore();
+const deliveryEnabled = computed(
+  () => authStore.tenant?.deliveryEnabled === true,
+);
 
 const order = ref<ShopOrder | null>(null);
 const loading = ref(false);
@@ -87,6 +111,27 @@ const actionLoading = ref<string | null>(null);
 const actionError = ref("");
 const showConfirmCancel = ref(false);
 const paymentMethods = ref<PaymentMethod[]>([]);
+const riders = ref<Rider[]>([]);
+const selectedRiderId = ref("");
+const deliveryActionLoading = ref<string | null>(null);
+const deliveryActionError = ref("");
+
+const riderOptions = computed(() =>
+  riders.value
+    .filter((r) => r.active && r.status === "available")
+    .map((r) => ({ value: r.id, label: r.name })),
+);
+
+const assignedRider = computed(() =>
+  riders.value.find((r) => r.id === order.value?.rider_id),
+);
+
+const deliveryEligible = computed(
+  () =>
+    order.value !== null &&
+    order.value.status !== "cancelled" &&
+    order.value.status !== "delivered",
+);
 
 function proofIsImage(url?: string, filename?: string): boolean {
   const src = filename ?? url ?? "";
@@ -156,9 +201,12 @@ async function load() {
   loading.value = true;
   loadError.value = "";
   try {
-    const [orderData, pmData] = await Promise.allSettled([
+    const [orderData, pmData, riderData] = await Promise.allSettled([
       useApiFetch<ShopOrder>(`/api/v1/shop-orders/${orderId}`),
       useApiFetch<PaymentMethod[]>(`/api/v1/payment-methods`),
+      deliveryEnabled.value
+        ? useApiFetch<Rider[]>(`/api/v1/riders`)
+        : Promise.resolve<Rider[]>([]),
     ]);
     if (orderData.status === "fulfilled") {
       order.value = orderData.value;
@@ -168,8 +216,57 @@ async function load() {
     if (pmData.status === "fulfilled") {
       paymentMethods.value = pmData.value;
     }
+    if (riderData.status === "fulfilled") {
+      riders.value = riderData.value;
+    }
   } finally {
     loading.value = false;
+  }
+}
+
+async function performDeliveryAction(
+  action:
+    | "assign-rider"
+    | "auto-assign-rider"
+    | "mark-delivered"
+    | "mark-rider-paid",
+) {
+  deliveryActionLoading.value = action;
+  deliveryActionError.value = "";
+  try {
+    const opts: Record<string, unknown> = { method: "POST" };
+    if (action === "assign-rider") {
+      opts.body = { rider_id: selectedRiderId.value };
+    }
+    order.value = await useApiFetch<ShopOrder>(
+      `/api/v1/orders/${orderId}/${action}`,
+      opts,
+    );
+    selectedRiderId.value = "";
+  } catch (err: unknown) {
+    const e = err as { data?: { detail?: string } };
+    deliveryActionError.value =
+      e?.data?.detail ?? "No pudimos completar la acción de entrega";
+  } finally {
+    deliveryActionLoading.value = null;
+  }
+}
+
+async function toggleUrgent() {
+  if (!order.value) return;
+  deliveryActionLoading.value = "urgent";
+  deliveryActionError.value = "";
+  try {
+    order.value = await useApiFetch<ShopOrder>(
+      `/api/v1/orders/${orderId}/urgent`,
+      { method: "PATCH", body: { urgent: !order.value.is_urgent } },
+    );
+  } catch (err: unknown) {
+    const e = err as { data?: { detail?: string } };
+    deliveryActionError.value =
+      e?.data?.detail ?? "No pudimos actualizar la urgencia del pedido";
+  } finally {
+    deliveryActionLoading.value = null;
   }
 }
 
@@ -408,6 +505,138 @@ onMounted(load);
           <p v-else class="text-xs text-muted-foreground">
             El cliente aún no subió el comprobante.
           </p>
+        </div>
+
+        <!-- Delivery (motorizados) -->
+        <div v-if="deliveryEnabled" class="border rounded-xl p-5 space-y-3">
+          <h3 class="text-sm font-bold text-foreground flex items-center gap-2">
+            <Bike class="w-4 h-4 text-primary" />
+            Entrega a domicilio
+          </h3>
+
+          <div
+            v-if="deliveryActionError"
+            class="bg-destructive/10 border border-destructive/30 text-destructive text-sm rounded-lg px-4 py-3"
+          >
+            {{ deliveryActionError }}
+          </div>
+
+          <!-- No rider assigned yet -->
+          <div
+            v-if="!order.rider_id && deliveryEligible"
+            class="flex items-center gap-2 flex-wrap"
+          >
+            <Select
+              v-model="selectedRiderId"
+              :options="riderOptions"
+              placeholder="Elegir motorizado..."
+              class="max-w-xs"
+            />
+            <button
+              type="button"
+              :disabled="!selectedRiderId || deliveryActionLoading !== null"
+              class="px-3 py-2 text-sm rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 cursor-pointer flex items-center gap-2"
+              @click="performDeliveryAction('assign-rider')"
+            >
+              <Loader2
+                v-if="deliveryActionLoading === 'assign-rider'"
+                class="w-4 h-4 animate-spin"
+              />
+              Asignar
+            </button>
+            <button
+              type="button"
+              :disabled="deliveryActionLoading !== null"
+              class="px-3 py-2 text-sm rounded-lg border hover:bg-muted transition-colors disabled:opacity-50 cursor-pointer flex items-center gap-2"
+              @click="performDeliveryAction('auto-assign-rider')"
+            >
+              <Loader2
+                v-if="deliveryActionLoading === 'auto-assign-rider'"
+                class="w-4 h-4 animate-spin"
+              />
+              <Bike v-else class="w-4 h-4" />
+              Auto-asignar
+            </button>
+          </div>
+
+          <!-- Rider assigned -->
+          <div v-else-if="order.rider_id" class="space-y-2">
+            <p class="text-sm text-foreground">
+              Motorizado:
+              <span class="font-medium">{{
+                assignedRider?.name ?? order.rider_id
+              }}</span>
+              <span
+                v-if="order.rider_fee != null"
+                class="text-xs text-muted-foreground ml-2"
+              >
+                (tarifa Bs.S {{ fmtCurrency(order.rider_fee) }})
+              </span>
+            </p>
+
+            <p
+              v-if="order.rider_delivered_at"
+              class="text-xs text-emerald-600 flex items-center gap-1"
+            >
+              <CheckCircle2 class="w-3.5 h-3.5" />
+              Entregado el {{ fmtDate(order.rider_delivered_at) }}
+            </p>
+            <button
+              v-else-if="deliveryEligible"
+              type="button"
+              :disabled="deliveryActionLoading !== null"
+              class="px-3 py-2 text-sm rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition-colors disabled:opacity-50 cursor-pointer flex items-center gap-2"
+              @click="performDeliveryAction('mark-delivered')"
+            >
+              <Loader2
+                v-if="deliveryActionLoading === 'mark-delivered'"
+                class="w-4 h-4 animate-spin"
+              />
+              <CheckCircle2 v-else class="w-4 h-4" />
+              Marcar entregado por el motorizado
+            </button>
+
+            <p
+              v-if="order.rider_paid_at"
+              class="text-xs text-muted-foreground flex items-center gap-1"
+            >
+              <DollarSign class="w-3.5 h-3.5" />
+              Pagado al motorizado el {{ fmtDate(order.rider_paid_at) }}
+            </p>
+            <button
+              v-else-if="order.rider_delivered_at && order.rider_fee != null"
+              type="button"
+              :disabled="deliveryActionLoading !== null"
+              class="px-3 py-2 text-sm rounded-lg border hover:bg-muted transition-colors disabled:opacity-50 cursor-pointer flex items-center gap-2"
+              @click="performDeliveryAction('mark-rider-paid')"
+            >
+              <Loader2
+                v-if="deliveryActionLoading === 'mark-rider-paid'"
+                class="w-4 h-4 animate-spin"
+              />
+              <DollarSign v-else class="w-4 h-4" />
+              Marcar motorizado como pagado
+            </button>
+          </div>
+
+          <!-- Urgent toggle -->
+          <div
+            v-if="deliveryEligible"
+            class="flex items-center gap-3 pt-2 border-t"
+          >
+            <Switch
+              :model-value="order.is_urgent"
+              :disabled="deliveryActionLoading !== null"
+              @update:model-value="toggleUrgent"
+            />
+            <span class="text-sm text-muted-foreground flex items-center gap-1">
+              <Zap class="w-3.5 h-3.5" />
+              Pedido urgente
+              <span v-if="order.urgent_fee != null" class="text-xs">
+                (recargo Bs.S {{ fmtCurrency(order.urgent_fee) }})
+              </span>
+            </span>
+          </div>
         </div>
 
         <!-- Action error -->

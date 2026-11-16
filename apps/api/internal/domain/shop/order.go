@@ -53,6 +53,15 @@ type ShopOrder struct {
 	PaymentProofUploadedAt *time.Time `json:"payment_proof_uploaded_at,omitempty"`
 	PaymentMethodID        *uuid.UUID `json:"payment_method_id,omitempty"`
 	PaymentReference       string     `json:"payment_reference,omitempty"`
+
+	// Delivery (motorizados) — populated once a rider is assigned.
+	RiderID          *uuid.UUID `json:"rider_id,omitempty"`
+	RiderFee         *float64   `json:"rider_fee,omitempty"`
+	RiderAssignedAt  *time.Time `json:"rider_assigned_at,omitempty"`
+	RiderDeliveredAt *time.Time `json:"rider_delivered_at,omitempty"`
+	RiderPaidAt      *time.Time `json:"rider_paid_at,omitempty"`
+	IsUrgent         bool       `json:"is_urgent"`
+	UrgentFee        *float64   `json:"urgent_fee,omitempty"`
 }
 
 // OrderLine is a single product line inside a shop order.
@@ -156,6 +165,11 @@ var (
 	ErrPaymentProofAlreadyExists = errors.New("payment proof already submitted")
 	ErrPaymentProofInvalidType   = errors.New("unsupported file type")
 	ErrPaymentProofTooLarge      = errors.New("file too large")
+
+	// Delivery (motorizados) errors
+	ErrRiderAlreadyAssigned        = errors.New("a rider is already assigned to this order")
+	ErrNoRiderAssigned             = errors.New("no rider assigned to this order")
+	ErrOrderNotEligibleForDelivery = errors.New("order is not eligible for delivery assignment")
 )
 
 // ─── Payment proof validation ─────────────────────────────────────────────────

@@ -85,13 +85,13 @@ func NewProductService(pool *pgxpool.Pool, fetcher exchangerate.Fetcher) *Produc
 }
 
 // resolveUSDPrice computes internal_price = priceUSD * the tenant's current
-// BS/USD rate, resolved via the shared currentExchangeRate resolver (T2).
+// BS/USD rate, via the shared ResolveUSDAmount helper.
 func (s *ProductService) resolveUSDPrice(ctx context.Context, tenantID uuid.UUID, priceUSD float64) (float64, error) {
-	rate, err := currentExchangeRate(ctx, s.pool, s.fetcher, tenantID)
+	price, err := ResolveUSDAmount(ctx, s.pool, s.fetcher, tenantID, priceUSD)
 	if err != nil {
 		return 0, fmt.Errorf("resolve usd price: %w", err)
 	}
-	return priceUSD * rate, nil
+	return price, nil
 }
 
 // List returns a paginated list of products for the given tenant.

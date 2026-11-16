@@ -56,7 +56,7 @@ async function handleSubmit() {
 
   try {
     await store.login(email.value, password.value);
-    await navigateTo("/dashboard");
+    await navigateTo(store.isRider ? "/my-deliveries" : "/dashboard");
   } catch (err: unknown) {
     const apiError = err as { data?: { detail?: string }; message?: string };
     errorMessage.value =

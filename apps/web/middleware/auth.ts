@@ -25,6 +25,12 @@ export default defineNuxtRouteMiddleware((to) => {
   }
 
   if (store.isAuthenticated && to.path.startsWith("/auth")) {
-    return navigateTo("/dashboard");
+    return navigateTo(store.isRider ? "/my-deliveries" : "/dashboard");
+  }
+
+  // Riders only have their own mobile surface — no owner/employee dashboard
+  // route restriction exists yet beyond this, so keep this minimal.
+  if (store.isRider && !isPublic && to.path !== "/my-deliveries") {
+    return navigateTo("/my-deliveries");
   }
 });

@@ -43,3 +43,6 @@ apps/web/android/
 # Temporary
 tmp/
 temp/
+
+# Local-only production backups — never commit real data
+.backups/

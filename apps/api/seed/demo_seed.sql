@@ -3,8 +3,10 @@
 -- ============================================================================
 -- Genera un dataset coherente y con volumen para demos a clientes y pruebas de
 -- paginación / transacciones / flujos. Idempotente: hace RESET del catálogo y
--- las transacciones del tenant y vuelve a sembrar. MANTIENE: tenant, usuarios,
--- métodos de pago, features y branding.
+-- las transacciones del tenant y vuelve a sembrar. MANTIENE: tenant, usuarios
+-- reales (owner/employee), métodos de pago, features y branding. Los
+-- motorizados demo (email LIKE 'motorizado.demo%') SÍ se recrean en cada
+-- corrida — nunca toca un rider real con otro email.
 --
 -- Portable: resuelve tenant/owner/payment-methods dinámicamente, así el mismo
 -- archivo corre en local y en prod.
@@ -19,19 +21,33 @@
 BEGIN;
 SET session_replication_role = replica;
 
--- ---------- Contexto (resuelto por tenant, portable local/prod) ----------
+-- ---------- Contexto (resuelto por el email del owner, portable local/prod) ----------
+-- Prod: el tenant real de danztty@gmail.com. Local: si ese email no existe
+-- ahi (dev), cae al tenant de prueba Bond para que el script no quede sin
+-- destino. Nunca hardcodear un tenant_id suelto otra vez: eso es lo que
+-- rompia la portabilidad antes.
+CREATE TEMP TABLE _tenant ON COMMIT DROP AS
+SELECT COALESCE(
+  (SELECT tenant_id FROM tenant_users WHERE email = 'danztty@gmail.com' ORDER BY (role = 'owner') DESC LIMIT 1),
+  'e75c20d2-5131-4643-9b33-3065b8adbbce'::uuid
+) AS tenant_id;
+
 CREATE TEMP TABLE _ctx ON COMMIT DROP AS
 SELECT
-  'b6818e0f-4785-4f2f-af35-69e36a1a7967'::uuid AS tenant_id,
+  tn.tenant_id,
   (SELECT id FROM tenant_users
-     WHERE tenant_id = 'b6818e0f-4785-4f2f-af35-69e36a1a7967'
+     WHERE tenant_id = tn.tenant_id
      ORDER BY (role = 'owner') DESC LIMIT 1) AS owner_id,
   (SELECT id FROM tenant_payment_methods
-     WHERE tenant_id = 'b6818e0f-4785-4f2f-af35-69e36a1a7967' AND type = 'pago_movil'
+     WHERE tenant_id = tn.tenant_id AND type = 'pago_movil'
      LIMIT 1) AS pm_pagomovil,
   (SELECT id FROM tenant_payment_methods
-     WHERE tenant_id = 'b6818e0f-4785-4f2f-af35-69e36a1a7967' AND type = 'zelle'
-     LIMIT 1) AS pm_zelle;
+     WHERE tenant_id = tn.tenant_id AND type = 'zelle'
+     LIMIT 1) AS pm_zelle
+FROM _tenant tn;
+
+-- Delivery necesita estar prendido para que los motorizados demo tengan sentido.
+UPDATE tenants SET delivery_enabled = true WHERE id = (SELECT tenant_id FROM _ctx);
 
 -- ============================== RESET ==============================
 -- Orden FK-safe. Scopeado al tenant. NO toca tenants/users/payment_methods/features.
@@ -45,6 +61,8 @@ DELETE FROM sales_orders           WHERE tenant_id = (SELECT tenant_id FROM _ctx
 DELETE FROM fiscal_invoices        WHERE tenant_id = (SELECT tenant_id FROM _ctx);
 DELETE FROM internal_invoices      WHERE tenant_id = (SELECT tenant_id FROM _ctx);
 DELETE FROM shop_orders            WHERE tenant_id = (SELECT tenant_id FROM _ctx);
+DELETE FROM riders                 WHERE tenant_id = (SELECT tenant_id FROM _ctx);
+DELETE FROM tenant_users           WHERE tenant_id = (SELECT tenant_id FROM _ctx) AND email LIKE 'motorizado.demo%';
 DELETE FROM purchase_orders        WHERE tenant_id = (SELECT tenant_id FROM _ctx);
 DELETE FROM suppliers              WHERE tenant_id = (SELECT tenant_id FROM _ctx);
 DELETE FROM inventory_movements    WHERE tenant_id = (SELECT tenant_id FROM _ctx);
@@ -358,6 +376,30 @@ UPDATE fiscal_invoices fi SET
   total         = COALESCE((SELECT sum(subtotal+tax_amount) FROM fiscal_invoice_lines WHERE invoice_id=fi.id),0)
 WHERE fi.tenant_id=(SELECT tenant_id FROM _ctx);
 
+-- ============================== MOTORIZADOS DEMO (3) ==============================
+-- user_id de riders.riders apunta a tenant_users(id), no a auth.users — no hace
+-- falta una cuenta real de Supabase Auth para que el rider aparezca y se le
+-- puedan asignar pedidos en el panel. ponytail: estos riders demo no pueden
+-- loguearse de verdad (no tienen auth.users detrás); si hace falta probar el
+-- login real del rider, invitarlo desde /settings como cualquier usuario.
+INSERT INTO tenant_users (id, tenant_id, supabase_uid, email, role, active)
+SELECT gen_random_uuid(), (SELECT tenant_id FROM _ctx), gen_random_uuid(), r.email, 'rider', true
+FROM (VALUES
+  ('motorizado.demo1@bond-seed.local'),
+  ('motorizado.demo2@bond-seed.local'),
+  ('motorizado.demo3@bond-seed.local')
+) r(email);
+
+INSERT INTO riders (id, tenant_id, user_id, name, phone, rate_per_delivery, status, max_concurrent_deliveries, active, created_at)
+SELECT gen_random_uuid(), (SELECT tenant_id FROM _ctx), tu.id, d.name, d.phone, d.rate, d.status, d.max_concurrent, true,
+       now() - (floor(random()*30) || ' days')::interval
+FROM (VALUES
+  ('motorizado.demo1@bond-seed.local', 'Carlos Pérez',   '0414-1234567', 2.50, 'available', 3),
+  ('motorizado.demo2@bond-seed.local', 'Rafael Soto',    '0424-2345678', 2.50, 'available', 2),
+  ('motorizado.demo3@bond-seed.local', 'Daniela Torres', '0412-3456789', 3.00, 'unavailable', 2)
+) d(email, name, phone, rate, status, max_concurrent)
+JOIN tenant_users tu ON tu.tenant_id = (SELECT tenant_id FROM _ctx) AND tu.email = d.email;
+
 -- ============================== PEDIDOS TIENDA / B2C (30) ==============================
 CREATE TEMP TABLE _shop ON COMMIT DROP AS
 SELECT gen_random_uuid() AS id, g AS n,
@@ -366,6 +408,7 @@ SELECT gen_random_uuid() AS id, g AS n,
 FROM generate_series(1,30) g;
 
 INSERT INTO shop_orders (id, tenant_id, customer_name, customer_email, customer_phone, shipping_address, shipping_city, shipping_notes,
+                         delivery_lat, delivery_lng,
                          subtotal, shipping_cost, total, status, notes, access_token, paid_at, fulfilled_at, delivered_at, cancelled_at,
                          payment_method_id, payment_reference, created_at, updated_at)
 SELECT sh.id, (SELECT tenant_id FROM _ctx),
@@ -373,8 +416,10 @@ SELECT sh.id, (SELECT tenant_id FROM _ctx),
        'cliente'||sh.n||'@gmail.com',
        '0'||(414+floor(random()*20))::text||'-'||(1000000+floor(random()*8999999))::text,
        'Calle '||(1+floor(random()*80))::text||', Residencias Las Acacias, piso '||(1+floor(random()*10))::text,
-       (ARRAY['Caracas','Maracaibo','Valencia','Barquisimeto','Maracay','Maturín'])[1+floor(random()*6)],
+       (ARRAY['Caracas','Maracaibo','Valencia','Barquisimeto','Maracay','Maturín'])[1+floor(random()*6)],
        CASE WHEN random()<0.3 THEN 'Entregar en horario de tarde' ELSE NULL END,
+       -- Jitter alrededor del centro de Caracas — no corresponde a la shipping_city real, es demo.
+       10.4806 + (random()-0.5)*0.15, -66.9036 + (random()-0.5)*0.15,
        0, (ARRAY[0,3,5,4])[1+floor(random()*4)], 0, sh.status,
        NULL, replace(gen_random_uuid()::text,'-',''),
        CASE WHEN sh.status IN ('paid','fulfilled','delivered') THEN sh.created_at + interval '4 hours' END,
@@ -401,6 +446,27 @@ UPDATE shop_orders sh SET
   subtotal = COALESCE((SELECT sum(subtotal) FROM shop_order_lines WHERE order_id=sh.id),0),
   total    = COALESCE((SELECT sum(subtotal) FROM shop_order_lines WHERE order_id=sh.id),0) + sh.shipping_cost
 WHERE sh.tenant_id=(SELECT tenant_id FROM _ctx);
+
+-- Asignar la mitad de los pedidos fulfilled/delivered a un motorizado demo,
+-- con un par marcados urgentes y los delivered ya liquidados al rider.
+WITH eligible AS (
+  SELECT id, status, row_number() OVER (ORDER BY created_at) AS rn
+  FROM shop_orders
+  WHERE tenant_id = (SELECT tenant_id FROM _ctx) AND status IN ('fulfilled','delivered')
+), picked AS (
+  SELECT id, status FROM eligible WHERE rn % 2 = 0
+)
+UPDATE shop_orders sh SET
+  rider_id           = (SELECT id FROM riders WHERE tenant_id=(SELECT tenant_id FROM _ctx) ORDER BY random() LIMIT 1),
+  rider_fee           = (SELECT rate_per_delivery FROM riders WHERE tenant_id=(SELECT tenant_id FROM _ctx) ORDER BY random() LIMIT 1),
+  rider_assigned_at   = sh.created_at + interval '30 minutes',
+  rider_delivered_at  = CASE WHEN picked.status = 'delivered' THEN sh.created_at + interval '2 hours' END,
+  rider_paid_at       = CASE WHEN picked.status = 'delivered' AND random() < 0.6 THEN sh.created_at + interval '1 day' END,
+  is_urgent           = picked.id IN (SELECT id FROM picked ORDER BY id LIMIT 2),
+  urgent_fee          = CASE WHEN picked.id IN (SELECT id FROM picked ORDER BY id LIMIT 2)
+                              THEN (SELECT urgent_delivery_fee FROM tenants WHERE id=(SELECT tenant_id FROM _ctx)) END
+FROM picked
+WHERE sh.id = picked.id;
 
 -- ============================== SECUENCIA DE CORRELATIVOS ==============================
 INSERT INTO invoice_correlative_seq (tenant_id, year, last_seq)

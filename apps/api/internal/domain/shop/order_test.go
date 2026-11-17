@@ -11,11 +11,17 @@ import (
 
 // ─── CreateOrderRequest.Validate ─────────────────────────────────────────────
 
+func lat() *float64 { v := 10.4806; return &v }
+func lng() *float64 { v := -66.9036; return &v }
+
 func TestCreateOrderRequest_Validate_HappyPath(t *testing.T) {
 	req := shop.CreateOrderRequest{
 		CustomerName:    "Ana Pérez",
 		CustomerEmail:   "ana@example.com",
+		CustomerPhone:   "+58 412 1234567",
 		ShippingAddress: "Av. Principal 123",
+		DeliveryLat:     lat(),
+		DeliveryLng:     lng(),
 		Lines: []shop.CreateOrderLineRequest{
 			{ProductID: uuid.New(), Quantity: 2},
 		},
@@ -58,6 +64,35 @@ func TestCreateOrderRequest_Validate_MissingAddress(t *testing.T) {
 	}
 	if err := req.Validate(); err == nil {
 		t.Error("Validate() expected error for missing shipping address, got nil")
+	}
+}
+
+func TestCreateOrderRequest_Validate_MissingDeliveryLocation(t *testing.T) {
+	req := shop.CreateOrderRequest{
+		CustomerName:    "Ana Pérez",
+		CustomerEmail:   "ana@example.com",
+		CustomerPhone:   "+58 412 1234567",
+		ShippingAddress: "Av. Principal 123",
+		Lines:           []shop.CreateOrderLineRequest{{ProductID: uuid.New(), Quantity: 1}},
+	}
+	err := req.Validate()
+	if !errors.Is(err, shop.ErrDeliveryLocationRequired) {
+		t.Errorf("Validate() expected ErrDeliveryLocationRequired, got %v", err)
+	}
+}
+
+func TestCreateOrderRequest_Validate_MissingCustomerPhone(t *testing.T) {
+	req := shop.CreateOrderRequest{
+		CustomerName:    "Ana Pérez",
+		CustomerEmail:   "ana@example.com",
+		ShippingAddress: "Av. Principal 123",
+		DeliveryLat:     lat(),
+		DeliveryLng:     lng(),
+		Lines:           []shop.CreateOrderLineRequest{{ProductID: uuid.New(), Quantity: 1}},
+	}
+	err := req.Validate()
+	if !errors.Is(err, shop.ErrCustomerPhoneRequired) {
+		t.Errorf("Validate() expected ErrCustomerPhoneRequired, got %v", err)
 	}
 }
 

@@ -324,6 +324,9 @@ func (s *RiderService) GetOrderDeliveryState(ctx context.Context, tenantID, orde
 func (s *RiderService) ListMyDeliveries(ctx context.Context, tenantID, riderID uuid.UUID) ([]shop.ShopOrder, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, tenant_id, status,
+		       customer_name, COALESCE(customer_phone, ''),
+		       shipping_address, COALESCE(shipping_city, ''),
+		       delivery_lat, delivery_lng, total,
 		       rider_id, rider_fee, rider_assigned_at, rider_delivered_at, rider_paid_at,
 		       is_urgent, urgent_fee
 		FROM shop_orders
@@ -341,6 +344,9 @@ func (s *RiderService) ListMyDeliveries(ctx context.Context, tenantID, riderID u
 		var o shop.ShopOrder
 		if err := rows.Scan(
 			&o.ID, &o.TenantID, &o.Status,
+			&o.CustomerName, &o.CustomerPhone,
+			&o.ShippingAddress, &o.ShippingCity,
+			&o.DeliveryLat, &o.DeliveryLng, &o.Total,
 			&o.RiderID, &o.RiderFee, &o.RiderAssignedAt, &o.RiderDeliveredAt, &o.RiderPaidAt,
 			&o.IsUrgent, &o.UrgentFee,
 		); err != nil {

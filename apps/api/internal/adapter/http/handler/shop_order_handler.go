@@ -56,6 +56,8 @@ type checkoutReq struct {
 	CustomerEmail   string            `json:"customer_email"`
 	CustomerPhone   string            `json:"customer_phone"`
 	ShippingAddress string            `json:"shipping_address"`
+	DeliveryLat     *float64          `json:"delivery_lat"`
+	DeliveryLng     *float64          `json:"delivery_lng"`
 	ShippingCity    string            `json:"shipping_city"`
 	ShippingNotes   string            `json:"shipping_notes"`
 	Notes           string            `json:"notes"`
@@ -92,6 +94,8 @@ func (h *ShopOrderHandler) Checkout(c echo.Context) error {
 		CustomerEmail:   body.CustomerEmail,
 		CustomerPhone:   body.CustomerPhone,
 		ShippingAddress: body.ShippingAddress,
+		DeliveryLat:     body.DeliveryLat,
+		DeliveryLng:     body.DeliveryLng,
 		ShippingCity:    body.ShippingCity,
 		ShippingNotes:   body.ShippingNotes,
 		Notes:           body.Notes,
@@ -435,6 +439,8 @@ func mapShopOrderError(c echo.Context, err error) error {
 	case errors.Is(err, shop.ErrCustomerNameRequired),
 		errors.Is(err, shop.ErrCustomerEmailRequired),
 		errors.Is(err, shop.ErrShippingAddressRequired),
+		errors.Is(err, shop.ErrDeliveryLocationRequired),
+		errors.Is(err, shop.ErrCustomerPhoneRequired),
 		errors.Is(err, shop.ErrEmptyOrder),
 		errors.Is(err, shop.ErrInvalidQuantity):
 		return c.JSON(http.StatusBadRequest, map[string]string{

@@ -167,6 +167,7 @@ func (s *ShopOrderService) Checkout(ctx context.Context, tenantID uuid.UUID, req
 			id, tenant_id,
 			customer_name, customer_email, customer_phone,
 			shipping_address, shipping_city, shipping_notes,
+			delivery_lat, delivery_lng,
 			subtotal, shipping_cost, total,
 			status, notes, access_token,
 			created_at, updated_at
@@ -174,13 +175,15 @@ func (s *ShopOrderService) Checkout(ctx context.Context, tenantID uuid.UUID, req
 			$1, $2,
 			$3, $4, $5,
 			$6, $7, $8,
-			$9, $10, $11,
-			'pending', $12, $13,
-			$14, $14
+			$9, $10,
+			$11, $12, $13,
+			'pending', $14, $15,
+			$16, $16
 		)`,
 		orderID, tenantID,
 		req.CustomerName, req.CustomerEmail, req.CustomerPhone,
 		req.ShippingAddress, req.ShippingCity, req.ShippingNotes,
+		req.DeliveryLat, req.DeliveryLng,
 		subtotal, shippingCost, total,
 		req.Notes, accessToken,
 		now,
@@ -217,6 +220,8 @@ func (s *ShopOrderService) Checkout(ctx context.Context, tenantID uuid.UUID, req
 		CustomerEmail:   req.CustomerEmail,
 		CustomerPhone:   req.CustomerPhone,
 		ShippingAddress: req.ShippingAddress,
+		DeliveryLat:     req.DeliveryLat,
+		DeliveryLng:     req.DeliveryLng,
 		ShippingCity:    req.ShippingCity,
 		ShippingNotes:   req.ShippingNotes,
 		Subtotal:        subtotal,
@@ -272,6 +277,7 @@ func (s *ShopOrderService) ListTenantOrders(ctx context.Context, tenantID uuid.U
 		SELECT id, tenant_id,
 		       customer_name, customer_email, COALESCE(customer_phone, ''),
 		       shipping_address, COALESCE(shipping_city, ''), COALESCE(shipping_notes, ''),
+		       delivery_lat, delivery_lng,
 		       subtotal, shipping_cost, total,
 		       status, COALESCE(notes, ''),
 		       paid_at, fulfilled_at, delivered_at, cancelled_at,
@@ -324,6 +330,7 @@ func (s *ShopOrderService) ListCustomerOrders(ctx context.Context, tenantID uuid
 		SELECT so.id, so.tenant_id,
 		       so.customer_name, so.customer_email, COALESCE(so.customer_phone, ''),
 		       so.shipping_address, COALESCE(so.shipping_city, ''), COALESCE(so.shipping_notes, ''),
+		       so.delivery_lat, so.delivery_lng,
 		       so.subtotal, so.shipping_cost, so.total,
 		       so.status, COALESCE(so.notes, ''),
 		       so.paid_at, so.fulfilled_at, so.delivered_at, so.cancelled_at,
@@ -401,6 +408,7 @@ func scanCustomerOrder(rows pgx.Rows) (*shop.ShopOrder, error) {
 		&o.ID, &o.TenantID,
 		&o.CustomerName, &o.CustomerEmail, &o.CustomerPhone,
 		&o.ShippingAddress, &o.ShippingCity, &o.ShippingNotes,
+		&o.DeliveryLat, &o.DeliveryLng,
 		&o.Subtotal, &o.ShippingCost, &o.Total,
 		&o.Status, &o.Notes,
 		&o.PaidAt, &o.FulfilledAt, &o.DeliveredAt, &o.CancelledAt,
@@ -598,6 +606,7 @@ func (s *ShopOrderService) getOrderByID(ctx context.Context, tenantID, orderID u
 		SELECT id, tenant_id,
 		       customer_name, customer_email, COALESCE(customer_phone, ''),
 		       shipping_address, COALESCE(shipping_city, ''), COALESCE(shipping_notes, ''),
+		       delivery_lat, delivery_lng,
 		       subtotal, shipping_cost, total,
 		       status, COALESCE(notes, ''),
 		       paid_at, fulfilled_at, delivered_at, cancelled_at,
@@ -623,21 +632,42 @@ func (s *ShopOrderService) getOrderByID(ctx context.Context, tenantID, orderID u
 }
 
 // getOrderByIDWithToken fetches an order and validates the access token.
+// Scans its own column list (joining riders for the customer-facing rider
+// name) instead of reusing scanShopOrder, which has a fixed destination
+// count shared by the list/admin queries that don't need this join.
 func (s *ShopOrderService) getOrderByIDWithToken(ctx context.Context, tenantID, orderID uuid.UUID, accessToken string) (*shop.ShopOrder, error) {
-	o, err := scanShopOrder(s.pool.QueryRow(ctx, `
-		SELECT id, tenant_id,
-		       customer_name, customer_email, COALESCE(customer_phone, ''),
-		       shipping_address, COALESCE(shipping_city, ''), COALESCE(shipping_notes, ''),
-		       subtotal, shipping_cost, total,
-		       status, COALESCE(notes, ''),
-		       paid_at, fulfilled_at, delivered_at, cancelled_at,
-		       created_at, updated_at,
-		       payment_proof_url, payment_proof_filename, payment_proof_uploaded_at,
-		       payment_method_id, payment_reference
-		FROM shop_orders
-		WHERE id = $1 AND tenant_id = $2 AND access_token = $3`,
+	var o shop.ShopOrder
+	var proofURL, proofFilename, proofRef *string
+	var riderName *string
+	err := s.pool.QueryRow(ctx, `
+		SELECT so.id, so.tenant_id,
+		       so.customer_name, so.customer_email, COALESCE(so.customer_phone, ''),
+		       so.shipping_address, COALESCE(so.shipping_city, ''), COALESCE(so.shipping_notes, ''),
+		       so.delivery_lat, so.delivery_lng,
+		       so.subtotal, so.shipping_cost, so.total,
+		       so.status, COALESCE(so.notes, ''),
+		       so.paid_at, so.fulfilled_at, so.delivered_at, so.cancelled_at,
+		       so.created_at, so.updated_at,
+		       so.payment_proof_url, so.payment_proof_filename, so.payment_proof_uploaded_at,
+		       so.payment_method_id, so.payment_reference,
+		       so.rider_id, so.rider_assigned_at, so.rider_delivered_at, r.name
+		FROM shop_orders so
+		LEFT JOIN riders r ON r.id = so.rider_id
+		WHERE so.id = $1 AND so.tenant_id = $2 AND so.access_token = $3`,
 		orderID, tenantID, accessToken,
-	))
+	).Scan(
+		&o.ID, &o.TenantID,
+		&o.CustomerName, &o.CustomerEmail, &o.CustomerPhone,
+		&o.ShippingAddress, &o.ShippingCity, &o.ShippingNotes,
+		&o.DeliveryLat, &o.DeliveryLng,
+		&o.Subtotal, &o.ShippingCost, &o.Total,
+		&o.Status, &o.Notes,
+		&o.PaidAt, &o.FulfilledAt, &o.DeliveredAt, &o.CancelledAt,
+		&o.CreatedAt, &o.UpdatedAt,
+		&proofURL, &proofFilename, &o.PaymentProofUploadedAt,
+		&o.PaymentMethodID, &proofRef,
+		&o.RiderID, &o.RiderAssignedAt, &o.RiderDeliveredAt, &riderName,
+	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			// Intentionally opaque: whether the order doesn't exist or the token is wrong,
@@ -646,12 +676,22 @@ func (s *ShopOrderService) getOrderByIDWithToken(ctx context.Context, tenantID, 
 		}
 		return nil, fmt.Errorf("get shop order (public): %w", err)
 	}
+	if proofURL != nil {
+		o.PaymentProofURL = *proofURL
+	}
+	if proofFilename != nil {
+		o.PaymentProofFilename = *proofFilename
+	}
+	if proofRef != nil {
+		o.PaymentReference = *proofRef
+	}
+	o.RiderName = riderName
 	lines, err := s.loadLines(ctx, o.ID)
 	if err != nil {
 		return nil, err
 	}
 	o.Lines = lines
-	return o, nil
+	return &o, nil
 }
 
 // loadLines returns all lines for a given order sorted by sort_order.
@@ -695,6 +735,7 @@ func scanShopOrder(row shopOrderScanner) (*shop.ShopOrder, error) {
 		&o.ID, &o.TenantID,
 		&o.CustomerName, &o.CustomerEmail, &o.CustomerPhone,
 		&o.ShippingAddress, &o.ShippingCity, &o.ShippingNotes,
+		&o.DeliveryLat, &o.DeliveryLng,
 		&o.Subtotal, &o.ShippingCost, &o.Total,
 		&o.Status, &o.Notes,
 		&o.PaidAt, &o.FulfilledAt, &o.DeliveredAt, &o.CancelledAt,

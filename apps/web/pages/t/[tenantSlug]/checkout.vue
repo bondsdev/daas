@@ -56,6 +56,7 @@ const form = reactive({
   notes: "",
 });
 
+const deliveryLocation = ref<{ lat: number; lng: number } | null>(null);
 const fieldErrors = reactive<Record<string, string>>({});
 const serverError = ref("");
 const submitting = ref(false);
@@ -79,6 +80,14 @@ function validate(): boolean {
   }
   if (!form.shipping_address.trim()) {
     fieldErrors.shipping_address = "La dirección es obligatoria";
+    ok = false;
+  }
+  if (!form.customer_phone.trim()) {
+    fieldErrors.customer_phone = "El teléfono es obligatorio";
+    ok = false;
+  }
+  if (!deliveryLocation.value) {
+    fieldErrors.delivery_location = "Marcá el punto de entrega en el mapa";
     ok = false;
   }
   return ok;
@@ -110,6 +119,8 @@ async function submitCheckout() {
       shipping_city: form.shipping_city.trim(),
       shipping_notes: form.shipping_notes.trim(),
       notes: form.notes.trim(),
+      delivery_lat: deliveryLocation.value!.lat,
+      delivery_lng: deliveryLocation.value!.lng,
       lines: cartStore.items.map((i) => ({
         product_id: i.productId,
         quantity: i.qty,
@@ -278,16 +289,27 @@ async function submitCheckout() {
                   class="block text-xs font-semibold text-foreground mb-1.5"
                 >
                   <Phone class="w-3 h-3 inline mr-1" />
-                  Teléfono
+                  Teléfono <span class="text-destructive">*</span>
                 </label>
                 <input
                   id="customer_phone"
                   v-model="form.customer_phone"
                   type="tel"
                   autocomplete="tel"
-                  class="w-full h-11 px-3 rounded-lg border border-input bg-white text-sm focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                  :class="[
+                    'w-full h-11 px-3 rounded-lg border bg-white text-sm focus:outline-none focus:ring-2 focus:ring-primary/20',
+                    fieldErrors.customer_phone
+                      ? 'border-destructive focus:border-destructive'
+                      : 'border-input focus:border-primary',
+                  ]"
                   placeholder="+58 412 555 1234"
                 />
+                <p
+                  v-if="fieldErrors.customer_phone"
+                  class="text-xs text-destructive mt-1"
+                >
+                  {{ fieldErrors.customer_phone }}
+                </p>
               </div>
             </div>
           </div>
@@ -332,6 +354,20 @@ async function submitCheckout() {
                 class="text-xs text-destructive mt-1"
               >
                 {{ fieldErrors.shipping_address }}
+              </p>
+            </div>
+
+            <div>
+              <label class="block text-xs font-semibold text-foreground mb-1.5">
+                <MapPin class="w-3 h-3 inline mr-1" />
+                Punto exacto de entrega <span class="text-destructive">*</span>
+              </label>
+              <StorefrontDeliveryLocationPicker v-model="deliveryLocation" />
+              <p
+                v-if="fieldErrors.delivery_location"
+                class="text-xs text-destructive mt-1"
+              >
+                {{ fieldErrors.delivery_location }}
               </p>
             </div>
 
@@ -388,7 +424,7 @@ async function submitCheckout() {
         <div class="hidden lg:flex items-center justify-end pt-2">
           <button
             type="submit"
-            :disabled="submitting"
+            :disabled="submitting || !deliveryLocation"
             class="px-6 py-3.5 rounded-xl bg-primary text-white text-base font-bold flex items-center gap-2 hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-opacity cursor-pointer shadow-lg shadow-primary/20"
           >
             <Loader2 v-if="submitting" class="w-5 h-5 animate-spin" />
@@ -468,7 +504,7 @@ async function submitCheckout() {
             <!-- Submit row (desktop, inside summary) -->
             <button
               type="submit"
-              :disabled="submitting"
+              :disabled="submitting || !deliveryLocation"
               class="hidden lg:flex w-full mt-5 px-5 py-3.5 rounded-xl bg-primary text-white text-sm font-bold items-center justify-center gap-2 hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer shadow-lg shadow-primary/20"
               @click.prevent="submitCheckout"
             >
@@ -508,7 +544,7 @@ async function submitCheckout() {
       >
         <button
           type="submit"
-          :disabled="submitting"
+          :disabled="submitting || !deliveryLocation"
           class="flex h-14 w-full items-center justify-between rounded-2xl bg-primary px-5 text-primary-foreground shadow-md shadow-primary/25 disabled:opacity-50 disabled:cursor-not-allowed"
           @click.prevent="submitCheckout"
         >

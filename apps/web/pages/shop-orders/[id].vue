@@ -22,6 +22,8 @@ import {
   Bike,
   Zap,
   DollarSign,
+  Navigation,
+  MessageCircle,
 } from "lucide-vue-next";
 import { useApiFetch } from "~/composables/useAuth";
 import { useAuthStore } from "~/stores/auth";
@@ -87,6 +89,8 @@ interface ShopOrder {
   rider_paid_at?: string;
   is_urgent: boolean;
   urgent_fee?: number;
+  delivery_lat?: number | null;
+  delivery_lng?: number | null;
 }
 
 interface Rider {
@@ -162,6 +166,21 @@ function fmtDate(d: string | null) {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function locationUrl(o: ShopOrder) {
+  if (o.delivery_lat != null && o.delivery_lng != null) {
+    return `https://www.google.com/maps/search/?api=1&query=${o.delivery_lat},${o.delivery_lng}`;
+  }
+  const query = encodeURIComponent(
+    [o.shipping_address, o.shipping_city].filter(Boolean).join(", "),
+  );
+  return `https://www.google.com/maps/search/?api=1&query=${query}`;
+}
+
+function whatsappUrl(o: ShopOrder) {
+  const digits = o.customer_phone.replace(/\D/g, "");
+  return `https://wa.me/${digits}`;
 }
 
 const STATUS_CONFIG: Record<
@@ -519,6 +538,29 @@ onMounted(load);
             class="bg-destructive/10 border border-destructive/30 text-destructive text-sm rounded-lg px-4 py-3"
           >
             {{ deliveryActionError }}
+          </div>
+
+          <div class="flex items-center gap-2 flex-wrap">
+            <a
+              :href="locationUrl(order)"
+              target="_blank"
+              rel="noopener"
+              class="px-3 py-2 text-sm rounded-lg border hover:bg-muted transition-colors cursor-pointer flex items-center gap-2"
+            >
+              <Navigation class="w-4 h-4" />
+              {{
+                order.delivery_lat != null ? "Ver ubicación" : "Ver dirección"
+              }}
+            </a>
+            <a
+              :href="whatsappUrl(order)"
+              target="_blank"
+              rel="noopener"
+              class="px-3 py-2 text-sm rounded-lg border hover:bg-muted transition-colors cursor-pointer flex items-center gap-2 text-emerald-600"
+            >
+              <MessageCircle class="w-4 h-4" />
+              WhatsApp
+            </a>
           </div>
 
           <!-- No rider assigned yet -->

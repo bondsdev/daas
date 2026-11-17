@@ -45,6 +45,11 @@ const isNewOrder = route.query.new === "1";
 
 const { format: fmt } = useFormatPrice("VE");
 
+function deliveryMapUrl(o: ShopOrder) {
+  if (o.delivery_lat == null || o.delivery_lng == null) return null;
+  return `https://www.google.com/maps/search/?api=1&query=${o.delivery_lat},${o.delivery_lng}`;
+}
+
 interface OrderLine {
   id: string;
   product_id: string;
@@ -64,6 +69,8 @@ interface ShopOrder {
   shipping_address: string;
   shipping_city: string;
   shipping_notes: string;
+  delivery_lat: number | null;
+  delivery_lng: number | null;
   subtotal: number;
   shipping_cost: number;
   total: number;
@@ -73,6 +80,10 @@ interface ShopOrder {
   fulfilled_at: string | null;
   delivered_at: string | null;
   cancelled_at: string | null;
+  rider_id: string | null;
+  rider_name: string | null;
+  rider_assigned_at: string | null;
+  rider_delivered_at: string | null;
   created_at: string;
   updated_at: string;
   lines: OrderLine[];
@@ -523,6 +534,22 @@ onMounted(load);
               class="text-xs text-muted-foreground mt-0.5"
             >
               {{ fmtDate(order.cancelled_at) }}
+            </p>
+            <p
+              v-else-if="order.rider_id && order.status === 'fulfilled'"
+              class="text-xs text-muted-foreground mt-0.5"
+            >
+              Tu pedido va en camino con
+              {{ order.rider_name ?? "tu repartidor" }}.
+              <a
+                v-if="deliveryMapUrl(order)"
+                :href="deliveryMapUrl(order)!"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="inline-flex items-center gap-1 underline font-medium"
+              >
+                Ver ubicación en el mapa <ExternalLink class="w-3 h-3" />
+              </a>
             </p>
           </div>
         </div>

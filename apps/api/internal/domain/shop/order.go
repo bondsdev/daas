@@ -2,6 +2,7 @@ package shop
 
 import (
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -30,6 +31,8 @@ type ShopOrder struct {
 	CustomerEmail   string      `json:"customer_email"`
 	CustomerPhone   string      `json:"customer_phone"`
 	ShippingAddress string      `json:"shipping_address"`
+	DeliveryLat     *float64    `json:"delivery_lat"`
+	DeliveryLng     *float64    `json:"delivery_lng"`
 	ShippingCity    string      `json:"shipping_city"`
 	ShippingNotes   string      `json:"shipping_notes"`
 	Subtotal        float64     `json:"subtotal"`
@@ -56,6 +59,7 @@ type ShopOrder struct {
 
 	// Delivery (motorizados) — populated once a rider is assigned.
 	RiderID          *uuid.UUID `json:"rider_id,omitempty"`
+	RiderName        *string    `json:"rider_name,omitempty"`
 	RiderFee         *float64   `json:"rider_fee,omitempty"`
 	RiderAssignedAt  *time.Time `json:"rider_assigned_at,omitempty"`
 	RiderDeliveredAt *time.Time `json:"rider_delivered_at,omitempty"`
@@ -86,6 +90,8 @@ type CreateOrderRequest struct {
 	CustomerEmail   string
 	CustomerPhone   string
 	ShippingAddress string
+	DeliveryLat     *float64
+	DeliveryLng     *float64
 	ShippingCity    string
 	ShippingNotes   string
 	Notes           string
@@ -109,6 +115,12 @@ func (r *CreateOrderRequest) Validate() error {
 	}
 	if r.ShippingAddress == "" {
 		return ErrShippingAddressRequired
+	}
+	if r.DeliveryLat == nil || r.DeliveryLng == nil {
+		return ErrDeliveryLocationRequired
+	}
+	if strings.TrimSpace(r.CustomerPhone) == "" {
+		return ErrCustomerPhoneRequired
 	}
 	if len(r.Lines) == 0 {
 		return ErrEmptyOrder
@@ -148,17 +160,19 @@ func (o *ShopOrder) CanTransitionTo(next OrderStatus) error {
 // ─── Domain errors ────────────────────────────────────────────────────────────
 
 var (
-	ErrCustomerNameRequired    = errors.New("customer name is required")
-	ErrCustomerEmailRequired   = errors.New("customer email is required")
-	ErrShippingAddressRequired = errors.New("shipping address is required")
-	ErrEmptyOrder              = errors.New("order must have at least one line")
-	ErrInvalidQuantity         = errors.New("quantity must be positive")
-	ErrInvalidStatus           = errors.New("invalid order status")
-	ErrInvalidTransition       = errors.New("invalid status transition")
-	ErrShopOrderNotFound       = errors.New("shop order not found")
-	ErrInsufficientStock       = errors.New("insufficient stock")
-	ErrProductNotPurchasable   = errors.New("product is not available for purchase")
-	ErrInvalidAccessToken      = errors.New("invalid access token")
+	ErrCustomerNameRequired     = errors.New("customer name is required")
+	ErrCustomerEmailRequired    = errors.New("customer email is required")
+	ErrShippingAddressRequired  = errors.New("shipping address is required")
+	ErrDeliveryLocationRequired = errors.New("delivery location (lat/lng) is required")
+	ErrCustomerPhoneRequired    = errors.New("customer phone is required")
+	ErrEmptyOrder               = errors.New("order must have at least one line")
+	ErrInvalidQuantity          = errors.New("quantity must be positive")
+	ErrInvalidStatus            = errors.New("invalid order status")
+	ErrInvalidTransition        = errors.New("invalid status transition")
+	ErrShopOrderNotFound        = errors.New("shop order not found")
+	ErrInsufficientStock        = errors.New("insufficient stock")
+	ErrProductNotPurchasable    = errors.New("product is not available for purchase")
+	ErrInvalidAccessToken       = errors.New("invalid access token")
 
 	// Payment proof errors
 	ErrPaymentProofRequired      = errors.New("payment proof file required")

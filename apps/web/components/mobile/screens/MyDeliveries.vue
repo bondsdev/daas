@@ -6,6 +6,8 @@ import {
   Loader2,
   CheckCircle2,
   Truck,
+  Navigation,
+  MessageCircle,
 } from "lucide-vue-next";
 
 export interface MyDelivery {
@@ -14,6 +16,8 @@ export interface MyDelivery {
   customer_phone: string;
   shipping_address: string;
   shipping_city: string;
+  delivery_lat: number | null;
+  delivery_lng: number | null;
   total: number;
   rider_fee: number | null;
   is_urgent: boolean;
@@ -33,6 +37,21 @@ function fmtCurrency(n: number) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(n);
+}
+
+function locationUrl(order: MyDelivery) {
+  if (order.delivery_lat != null && order.delivery_lng != null) {
+    return `https://www.google.com/maps/search/?api=1&query=${order.delivery_lat},${order.delivery_lng}`;
+  }
+  const query = encodeURIComponent(
+    [order.shipping_address, order.shipping_city].filter(Boolean).join(", "),
+  );
+  return `https://www.google.com/maps/search/?api=1&query=${query}`;
+}
+
+function whatsappUrl(order: MyDelivery) {
+  const digits = order.customer_phone.replace(/\D/g, "");
+  return `https://wa.me/${digits}`;
 }
 </script>
 
@@ -109,6 +128,27 @@ function fmtCurrency(n: number) {
           >
             · tu pago: {{ fmtCurrency(order.rider_fee) }}
           </span>
+        </div>
+
+        <div class="mt-2 flex gap-1.5">
+          <a
+            :href="locationUrl(order)"
+            target="_blank"
+            rel="noopener"
+            class="no-min-tap flex h-9 flex-1 items-center justify-center gap-1.5 rounded-lg border border-input text-xs font-semibold text-foreground"
+          >
+            <Navigation class="size-3.5" />
+            {{ order.delivery_lat != null ? "Ver ubicación" : "Ver dirección" }}
+          </a>
+          <a
+            :href="whatsappUrl(order)"
+            target="_blank"
+            rel="noopener"
+            class="no-min-tap flex h-9 flex-1 items-center justify-center gap-1.5 rounded-lg border border-input text-xs font-semibold text-emerald-600"
+          >
+            <MessageCircle class="size-3.5" />
+            WhatsApp
+          </a>
         </div>
 
         <button

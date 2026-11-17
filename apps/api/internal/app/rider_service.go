@@ -319,8 +319,9 @@ func (s *RiderService) GetOrderDeliveryState(ctx context.Context, tenantID, orde
 	return s.loadOrderDeliveryState(ctx, tenantID, orderID)
 }
 
-// ListMyDeliveries returns the delivery-relevant subset of orders assigned to
-// the given rider, urgent first then oldest-assigned first.
+// ListMyDeliveries returns the delivery-relevant subset of active (not yet
+// delivered) orders assigned to the given rider, urgent first then
+// oldest-assigned first.
 func (s *RiderService) ListMyDeliveries(ctx context.Context, tenantID, riderID uuid.UUID) ([]shop.ShopOrder, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, tenant_id, status,
@@ -330,7 +331,7 @@ func (s *RiderService) ListMyDeliveries(ctx context.Context, tenantID, riderID u
 		       rider_id, rider_fee, rider_assigned_at, rider_delivered_at, rider_paid_at,
 		       is_urgent, urgent_fee
 		FROM shop_orders
-		WHERE tenant_id = $1 AND rider_id = $2
+		WHERE tenant_id = $1 AND rider_id = $2 AND rider_delivered_at IS NULL
 		ORDER BY is_urgent DESC, rider_assigned_at ASC`,
 		tenantID, riderID,
 	)
@@ -339,6 +340,69 @@ func (s *RiderService) ListMyDeliveries(ctx context.Context, tenantID, riderID u
 	}
 	defer rows.Close()
 
+	orders, err := scanMyDeliveryRows(rows)
+	if err != nil {
+		return nil, err
+	}
+	return orders, nil
+}
+
+// DeliveryHistory is the response for a rider's completed-deliveries history
+// screen: the completed orders plus this-week and all-time payout figures.
+type DeliveryHistory struct {
+	Deliveries         []shop.ShopOrder `json:"deliveries"`
+	EarningsThisWeek   float64          `json:"earnings_this_week"`
+	DeliveriesThisWeek int              `json:"deliveries_this_week"`
+	PendingPayout      float64          `json:"pending_payout"`
+}
+
+// GetDeliveryHistory returns the rider's delivered orders plus this-week
+// earnings/count and all-time unpaid (pending) payout.
+func (s *RiderService) GetDeliveryHistory(ctx context.Context, tenantID, riderID uuid.UUID) (*DeliveryHistory, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, tenant_id, status,
+		       customer_name, COALESCE(customer_phone, ''),
+		       shipping_address, COALESCE(shipping_city, ''),
+		       delivery_lat, delivery_lng, total,
+		       rider_id, rider_fee, rider_assigned_at, rider_delivered_at, rider_paid_at,
+		       is_urgent, urgent_fee
+		FROM shop_orders
+		WHERE tenant_id = $1 AND rider_id = $2 AND rider_delivered_at IS NOT NULL
+		ORDER BY rider_delivered_at DESC`,
+		tenantID, riderID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list delivery history: %w", err)
+	}
+	defer rows.Close()
+
+	deliveries, err := scanMyDeliveryRows(rows)
+	if err != nil {
+		return nil, err
+	}
+
+	var h DeliveryHistory
+	h.Deliveries = deliveries
+	if err := s.pool.QueryRow(ctx, `
+		WITH week_start AS (
+		  SELECT DATE_TRUNC('week', NOW())::TIMESTAMPTZ AS ts
+		)
+		SELECT
+		  COALESCE(SUM(rider_fee) FILTER (WHERE rider_delivered_at >= (SELECT ts FROM week_start)), 0)::float8,
+		  COUNT(*) FILTER (WHERE rider_delivered_at >= (SELECT ts FROM week_start))::int,
+		  COALESCE(SUM(rider_fee) FILTER (WHERE rider_paid_at IS NULL), 0)::float8
+		FROM shop_orders
+		WHERE tenant_id = $1 AND rider_id = $2 AND rider_delivered_at IS NOT NULL`,
+		tenantID, riderID,
+	).Scan(&h.EarningsThisWeek, &h.DeliveriesThisWeek, &h.PendingPayout); err != nil {
+		return nil, fmt.Errorf("delivery history aggregates: %w", err)
+	}
+	return &h, nil
+}
+
+// scanMyDeliveryRows scans the shared rider-delivery column set used by both
+// ListMyDeliveries and GetDeliveryHistory.
+func scanMyDeliveryRows(rows pgx.Rows) ([]shop.ShopOrder, error) {
 	var orders []shop.ShopOrder
 	for rows.Next() {
 		var o shop.ShopOrder
@@ -350,17 +414,42 @@ func (s *RiderService) ListMyDeliveries(ctx context.Context, tenantID, riderID u
 			&o.RiderID, &o.RiderFee, &o.RiderAssignedAt, &o.RiderDeliveredAt, &o.RiderPaidAt,
 			&o.IsUrgent, &o.UrgentFee,
 		); err != nil {
-			return nil, fmt.Errorf("scan my delivery: %w", err)
+			return nil, fmt.Errorf("scan delivery row: %w", err)
 		}
 		orders = append(orders, o)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("my deliveries rows: %w", err)
+		return nil, fmt.Errorf("delivery rows: %w", err)
 	}
 	if orders == nil {
 		orders = []shop.ShopOrder{}
 	}
 	return orders, nil
+}
+
+// UpdateMyStatus narrowly updates only the status column on the rider's own
+// row. Unlike UpdateRider (full-replace, owner/employee-only), this is the
+// rider-self-service operation and never touches rate/capacity/active.
+func (s *RiderService) UpdateMyStatus(ctx context.Context, tenantID, riderID uuid.UUID, status rider.Status) (*rider.Rider, error) {
+	if status != rider.StatusAvailable && status != rider.StatusUnavailable {
+		return nil, rider.ErrInvalidStatus
+	}
+	row := s.pool.QueryRow(ctx, `
+		UPDATE riders
+		SET status = $3, updated_at = NOW()
+		WHERE id = $1 AND tenant_id = $2
+		RETURNING id, tenant_id, user_id, name, COALESCE(phone, ''), rate_per_delivery,
+		          status, max_concurrent_deliveries, last_assigned_at, active, created_at, updated_at`,
+		riderID, tenantID, status,
+	)
+	r, err := scanRider(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, rider.ErrRiderNotFound
+		}
+		return nil, fmt.Errorf("update my status: %w", err)
+	}
+	return r, nil
 }
 
 // ─── Private helpers ──────────────────────────────────────────────────────────

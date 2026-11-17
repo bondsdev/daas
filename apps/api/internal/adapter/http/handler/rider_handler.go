@@ -50,6 +50,10 @@ type markUrgentReq struct {
 	Urgent bool `json:"urgent"`
 }
 
+type updateMyStatusReq struct {
+	Status rider.Status `json:"status"`
+}
+
 // ─── Role gating ──────────────────────────────────────────────────────────────
 //
 // There is no existing middleware for "owner or employee, not rider" or
@@ -298,6 +302,75 @@ func (h *RiderHandler) MyDeliveries(c echo.Context) error {
 		return WriteProblem(c, http.StatusInternalServerError, "internal-error", err.Error())
 	}
 	return c.JSON(http.StatusOK, orders)
+}
+
+// MyProfile handles GET /api/v1/my-profile. Rider only.
+func (h *RiderHandler) MyProfile(c echo.Context) error {
+	if !requireRiderRole(c) {
+		return nil
+	}
+	tenantID, err := getTenantID(c)
+	if err != nil {
+		return WriteProblem(c, http.StatusForbidden, "forbidden", "tenant context missing")
+	}
+
+	r, err := h.ownRider(c, tenantID)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, r)
+}
+
+// UpdateMyStatus handles PATCH /api/v1/my-profile/status. Rider only.
+func (h *RiderHandler) UpdateMyStatus(c echo.Context) error {
+	if !requireRiderRole(c) {
+		return nil
+	}
+	tenantID, err := getTenantID(c)
+	if err != nil {
+		return WriteProblem(c, http.StatusForbidden, "forbidden", "tenant context missing")
+	}
+
+	own, err := h.ownRider(c, tenantID)
+	if err != nil {
+		return err
+	}
+
+	var body updateMyStatusReq
+	if err := c.Bind(&body); err != nil {
+		return WriteProblem(c, http.StatusBadRequest, "bad-request", "invalid request body")
+	}
+	if body.Status != rider.StatusAvailable && body.Status != rider.StatusUnavailable {
+		return WriteProblem(c, http.StatusUnprocessableEntity, "validation-error", "status must be 'available' or 'unavailable'")
+	}
+
+	r, err := h.svc.UpdateMyStatus(c.Request().Context(), tenantID, own.ID, body.Status)
+	if err != nil {
+		return mapRiderError(c, err)
+	}
+	return c.JSON(http.StatusOK, r)
+}
+
+// MyDeliveryHistory handles GET /api/v1/my-deliveries/history. Rider only.
+func (h *RiderHandler) MyDeliveryHistory(c echo.Context) error {
+	if !requireRiderRole(c) {
+		return nil
+	}
+	tenantID, err := getTenantID(c)
+	if err != nil {
+		return WriteProblem(c, http.StatusForbidden, "forbidden", "tenant context missing")
+	}
+
+	r, err := h.ownRider(c, tenantID)
+	if err != nil {
+		return err
+	}
+
+	hist, err := h.svc.GetDeliveryHistory(c.Request().Context(), tenantID, r.ID)
+	if err != nil {
+		return WriteProblem(c, http.StatusInternalServerError, "internal-error", err.Error())
+	}
+	return c.JSON(http.StatusOK, hist)
 }
 
 // ─── Private helpers ──────────────────────────────────────────────────────────

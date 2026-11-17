@@ -404,6 +404,9 @@ func registerRoutes(
 	api.PATCH("/orders/:orderId/urgent", riderHandler.MarkUrgent)
 	api.POST("/orders/:orderId/mark-rider-paid", riderHandler.MarkRiderPaid)
 	api.GET("/my-deliveries", riderHandler.MyDeliveries)
+	api.GET("/my-deliveries/history", riderHandler.MyDeliveryHistory)
+	api.GET("/my-profile", riderHandler.MyProfile)
+	api.PATCH("/my-profile/status", riderHandler.UpdateMyStatus)
 
 	// Exchange rate — read-only access to the tenant's current BS/USD rate.
 	api.GET("/exchange-rate/current", exchangeRateHandler.Current)

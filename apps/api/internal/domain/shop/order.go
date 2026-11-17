@@ -59,6 +59,7 @@ type ShopOrder struct {
 
 	// Delivery (motorizados) — populated once a rider is assigned.
 	RiderID          *uuid.UUID `json:"rider_id,omitempty"`
+	RiderName        *string    `json:"rider_name,omitempty"`
 	RiderFee         *float64   `json:"rider_fee,omitempty"`
 	RiderAssignedAt  *time.Time `json:"rider_assigned_at,omitempty"`
 	RiderDeliveredAt *time.Time `json:"rider_delivered_at,omitempty"`

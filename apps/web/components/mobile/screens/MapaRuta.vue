@@ -212,9 +212,13 @@ onBeforeUnmount(() => {
         </span>
       </div>
 
-      <!-- Bottom sheet -->
+      <!-- Bottom sheet. Deliberately overlaps the map by a few points (sheet
+           top sits above the map's bottom edge) for the layered look the
+           approved mock uses — but Leaflet's own attribution control sits
+           inside the map at z-index 1000 by default, so without an explicit
+           higher z-index here it paints over this sheet's rounded top. -->
       <section
-        class="absolute inset-x-0 bottom-0 flex flex-col rounded-t-[22px] bg-background shadow-[0_-8px_24px_rgba(0,0,0,0.1)]"
+        class="absolute inset-x-0 bottom-0 z-[1100] flex flex-col rounded-t-[22px] bg-background shadow-[0_-8px_24px_rgba(0,0,0,0.1)]"
         style="top: 54%"
       >
         <div class="mx-auto mt-2.5 h-1 w-9 shrink-0 rounded-full bg-border" />

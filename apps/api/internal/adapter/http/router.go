@@ -14,6 +14,7 @@ import (
 	"github.com/danzt/daas/api/internal/adapter/exchangerate"
 	"github.com/danzt/daas/api/internal/adapter/http/handler"
 	mw "github.com/danzt/daas/api/internal/adapter/http/middleware"
+	"github.com/danzt/daas/api/internal/adapter/routing"
 	"github.com/danzt/daas/api/internal/adapter/storage"
 	"github.com/danzt/daas/api/internal/app"
 	"github.com/danzt/daas/api/internal/domain/notification"
@@ -37,6 +38,11 @@ type RouterConfig struct {
 	// When set, the router uses it directly instead of creating its own.
 	// Pass this from main.go when sharing the service with the retry worker.
 	FiscalInvoiceSvc *app.FiscalInvoiceService
+	// ORSAPIKey + ORSBaseURL configure the OpenRouteService client used by
+	// the rider route-map endpoint (GET /my-deliveries/route). The key is
+	// only ever attached to the outbound ORS request here, server-side.
+	ORSAPIKey  string
+	ORSBaseURL string
 }
 
 // NewRouter creates a new Echo instance with standard middleware configured
@@ -138,7 +144,7 @@ func NewRouterWithConfig(cfg RouterConfig) *echo.Echo { //nolint:funlen,cyclop
 	reportHandler := handler.NewReportHandler(cfg.Pool)
 	saleHandler := handler.NewSaleHandler(cfg.Pool)
 	cashSessionHandler := handler.NewCashSessionHandler(cfg.Pool)
-	riderHandler := handler.NewRiderHandler(cfg.Pool)
+	riderHandler := handler.NewRiderHandlerWithRouting(cfg.Pool, routing.NewORSClient(cfg.ORSBaseURL, cfg.ORSAPIKey))
 	exchangeRateHandler := handler.NewExchangeRateHandler(cfg.Pool)
 
 	// Build lifecycle email notifier from injected NotificationSvc.
@@ -405,6 +411,7 @@ func registerRoutes(
 	api.POST("/orders/:orderId/mark-rider-paid", riderHandler.MarkRiderPaid)
 	api.GET("/my-deliveries", riderHandler.MyDeliveries)
 	api.GET("/my-deliveries/history", riderHandler.MyDeliveryHistory)
+	api.GET("/my-deliveries/route", riderHandler.GetMyRoute)
 	api.GET("/my-profile", riderHandler.MyProfile)
 	api.PATCH("/my-profile/status", riderHandler.UpdateMyStatus)
 

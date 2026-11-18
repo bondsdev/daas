@@ -3,12 +3,14 @@ package handler
 import (
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/labstack/echo/v4"
 
 	"github.com/danzt/daas/api/internal/adapter/http/middleware"
+	"github.com/danzt/daas/api/internal/adapter/routing"
 	"github.com/danzt/daas/api/internal/app"
 	"github.com/danzt/daas/api/internal/domain/rider"
 	"github.com/danzt/daas/api/internal/domain/shop"
@@ -20,9 +22,17 @@ type RiderHandler struct {
 	svc *app.RiderService
 }
 
-// NewRiderHandler creates a RiderHandler backed by the given pool.
+// NewRiderHandler creates a RiderHandler backed by the given pool. The
+// route-map endpoint (GetMyRoute) will 502 until a routing provider is
+// wired via NewRiderHandlerWithRouting.
 func NewRiderHandler(pool *pgxpool.Pool) *RiderHandler {
 	return &RiderHandler{svc: app.NewRiderService(pool)}
+}
+
+// NewRiderHandlerWithRouting creates a RiderHandler with a routing
+// provider (e.g. routing.ORSClient) wired in, enabling GetMyRoute.
+func NewRiderHandlerWithRouting(pool *pgxpool.Pool, routeProvider routing.Provider) *RiderHandler {
+	return &RiderHandler{svc: app.NewRiderServiceWithRouting(pool, routeProvider)}
 }
 
 // ─── Request DTOs ─────────────────────────────────────────────────────────────
@@ -371,6 +381,57 @@ func (h *RiderHandler) MyDeliveryHistory(c echo.Context) error {
 		return WriteProblem(c, http.StatusInternalServerError, "internal-error", err.Error())
 	}
 	return c.JSON(http.StatusOK, hist)
+}
+
+// GetMyRoute handles GET /api/v1/my-deliveries/route. Rider only. Builds a
+// single multi-stop driving route covering all of the rider's active
+// deliveries, starting from the rider's current position passed in the
+// lat/lng query params.
+func (h *RiderHandler) GetMyRoute(c echo.Context) error {
+	if !requireRiderRole(c) {
+		return nil
+	}
+	tenantID, err := getTenantID(c)
+	if err != nil {
+		return WriteProblem(c, http.StatusForbidden, "forbidden", "tenant context missing")
+	}
+
+	lat, lng, err := parseLatLngQuery(c)
+	if err != nil {
+		return WriteProblem(c, http.StatusUnprocessableEntity, "validation-error", err.Error())
+	}
+
+	r, err := h.ownRider(c, tenantID)
+	if err != nil {
+		return err
+	}
+
+	route, err := h.svc.GetMyRoute(c.Request().Context(), tenantID, r.ID, lat, lng)
+	if err != nil {
+		if errors.Is(err, app.ErrRouteUnavailable) {
+			return WriteProblem(c, http.StatusBadGateway, "route-unavailable", "no se pudo calcular la ruta en este momento")
+		}
+		return WriteProblem(c, http.StatusInternalServerError, "internal-error", err.Error())
+	}
+	return c.JSON(http.StatusOK, route)
+}
+
+// parseLatLngQuery reads the required "lat"/"lng" query params as floats.
+func parseLatLngQuery(c echo.Context) (lat, lng float64, err error) {
+	latStr := c.QueryParam("lat")
+	lngStr := c.QueryParam("lng")
+	if latStr == "" || lngStr == "" {
+		return 0, 0, errors.New("lat and lng query params are required")
+	}
+	lat, err = strconv.ParseFloat(latStr, 64)
+	if err != nil {
+		return 0, 0, errors.New("lat must be a valid number")
+	}
+	lng, err = strconv.ParseFloat(lngStr, 64)
+	if err != nil {
+		return 0, 0, errors.New("lng must be a valid number")
+	}
+	return lat, lng, nil
 }
 
 // ─── Private helpers ──────────────────────────────────────────────────────────

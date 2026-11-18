@@ -14,6 +14,14 @@ type Config struct {
 	JWTSecret                string
 	DatabaseURL              string
 	IntegrationEncryptionKey string
+	// ORSAPIKey authenticates server-side calls to OpenRouteService's
+	// Directions API (rider route map). Sent as-is in the Authorization
+	// header, no "Bearer" prefix — verified against the live API.
+	ORSAPIKey string
+	// ORSBaseURL overrides OpenRouteService's API domain. Empty uses the
+	// default (api.openrouteservice.org); set only if ORS's documented
+	// migration to api.heigit.org becomes necessary.
+	ORSBaseURL string
 }
 
 // Load reads configuration from environment variables.
@@ -27,6 +35,8 @@ func Load() *Config {
 		JWTSecret:                getEnv("JWT_SECRET", ""),
 		DatabaseURL:              getEnv("DATABASE_URL", ""),
 		IntegrationEncryptionKey: getEnv("INTEGRATION_ENCRYPTION_KEY", ""),
+		ORSAPIKey:                getEnv("ORS_API_KEY", ""),
+		ORSBaseURL:               getEnv("ORS_BASE_URL", ""),
 	}
 }
 

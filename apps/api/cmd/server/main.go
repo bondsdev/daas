@@ -182,6 +182,8 @@ func main() {
 		StorefrontURL:    storefrontURL,
 		Storage:          storageAdapter,
 		FiscalInvoiceSvc: fiscalInvoiceSvc,
+		ORSAPIKey:        cfg.ORSAPIKey,
+		ORSBaseURL:       cfg.ORSBaseURL,
 	})
 
 	addr := ":" + cfg.Port

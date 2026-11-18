@@ -10,19 +10,41 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/danzt/daas/api/internal/adapter/routing"
 	"github.com/danzt/daas/api/internal/domain/rider"
 	"github.com/danzt/daas/api/internal/domain/shop"
 )
 
+// ErrRouteUnavailable wraps a routing-provider (ORS) failure in
+// GetMyRoute, so the handler can tell it apart from a plain internal/DB
+// error and answer the rider with "no se pudo calcular la ruta" instead of
+// an opaque 500.
+var ErrRouteUnavailable = errors.New("route unavailable")
+
 // RiderService manages delivery riders (motorizados) and the delivery
 // lifecycle (assignment, delivered, urgent fee, rider payout) on shop orders.
 type RiderService struct {
-	pool *pgxpool.Pool
+	pool          *pgxpool.Pool
+	routeProvider routing.Provider
 }
 
-// NewRiderService creates a RiderService backed by the given pool.
+// NewRiderService creates a RiderService backed by the given pool. The
+// route-map feature (GetMyRoute) is unavailable until a routing provider is
+// set via NewRiderServiceWithRouting or SetRouteProvider.
 func NewRiderService(pool *pgxpool.Pool) *RiderService {
 	return &RiderService{pool: pool}
+}
+
+// NewRiderServiceWithRouting creates a RiderService with a routing
+// provider (e.g. routing.ORSClient) wired in, enabling GetMyRoute.
+func NewRiderServiceWithRouting(pool *pgxpool.Pool, routeProvider routing.Provider) *RiderService {
+	return &RiderService{pool: pool, routeProvider: routeProvider}
+}
+
+// SetRouteProvider wires a routing provider onto an already-constructed
+// RiderService, mirroring this codebase's SetCashSessionService pattern.
+func (s *RiderService) SetRouteProvider(p routing.Provider) {
+	s.routeProvider = p
 }
 
 // ═══ Rider management ═════════════════════════════════════════════════════
@@ -319,15 +341,19 @@ func (s *RiderService) GetOrderDeliveryState(ctx context.Context, tenantID, orde
 	return s.loadOrderDeliveryState(ctx, tenantID, orderID)
 }
 
-// ListMyDeliveries returns the delivery-relevant subset of orders assigned to
-// the given rider, urgent first then oldest-assigned first.
+// ListMyDeliveries returns the delivery-relevant subset of active (not yet
+// delivered) orders assigned to the given rider, urgent first then
+// oldest-assigned first.
 func (s *RiderService) ListMyDeliveries(ctx context.Context, tenantID, riderID uuid.UUID) ([]shop.ShopOrder, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, tenant_id, status,
+		       customer_name, COALESCE(customer_phone, ''),
+		       shipping_address, COALESCE(shipping_city, ''),
+		       delivery_lat, delivery_lng, total,
 		       rider_id, rider_fee, rider_assigned_at, rider_delivered_at, rider_paid_at,
 		       is_urgent, urgent_fee
 		FROM shop_orders
-		WHERE tenant_id = $1 AND rider_id = $2
+		WHERE tenant_id = $1 AND rider_id = $2 AND rider_delivered_at IS NULL
 		ORDER BY is_urgent DESC, rider_assigned_at ASC`,
 		tenantID, riderID,
 	)
@@ -336,25 +362,189 @@ func (s *RiderService) ListMyDeliveries(ctx context.Context, tenantID, riderID u
 	}
 	defer rows.Close()
 
+	orders, err := scanMyDeliveryRows(rows)
+	if err != nil {
+		return nil, err
+	}
+	return orders, nil
+}
+
+// DeliveryHistory is the response for a rider's completed-deliveries history
+// screen: the completed orders plus this-week and all-time payout figures.
+type DeliveryHistory struct {
+	Deliveries         []shop.ShopOrder `json:"deliveries"`
+	EarningsThisWeek   float64          `json:"earnings_this_week"`
+	DeliveriesThisWeek int              `json:"deliveries_this_week"`
+	PendingPayout      float64          `json:"pending_payout"`
+}
+
+// GetDeliveryHistory returns the rider's delivered orders plus this-week
+// earnings/count and all-time unpaid (pending) payout.
+func (s *RiderService) GetDeliveryHistory(ctx context.Context, tenantID, riderID uuid.UUID) (*DeliveryHistory, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, tenant_id, status,
+		       customer_name, COALESCE(customer_phone, ''),
+		       shipping_address, COALESCE(shipping_city, ''),
+		       delivery_lat, delivery_lng, total,
+		       rider_id, rider_fee, rider_assigned_at, rider_delivered_at, rider_paid_at,
+		       is_urgent, urgent_fee
+		FROM shop_orders
+		WHERE tenant_id = $1 AND rider_id = $2 AND rider_delivered_at IS NOT NULL
+		ORDER BY rider_delivered_at DESC`,
+		tenantID, riderID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list delivery history: %w", err)
+	}
+	defer rows.Close()
+
+	deliveries, err := scanMyDeliveryRows(rows)
+	if err != nil {
+		return nil, err
+	}
+
+	var h DeliveryHistory
+	h.Deliveries = deliveries
+	if err := s.pool.QueryRow(ctx, `
+		WITH week_start AS (
+		  SELECT DATE_TRUNC('week', NOW())::TIMESTAMPTZ AS ts
+		)
+		SELECT
+		  COALESCE(SUM(rider_fee) FILTER (WHERE rider_delivered_at >= (SELECT ts FROM week_start)), 0)::float8,
+		  COUNT(*) FILTER (WHERE rider_delivered_at >= (SELECT ts FROM week_start))::int,
+		  COALESCE(SUM(rider_fee) FILTER (WHERE rider_paid_at IS NULL), 0)::float8
+		FROM shop_orders
+		WHERE tenant_id = $1 AND rider_id = $2 AND rider_delivered_at IS NOT NULL`,
+		tenantID, riderID,
+	).Scan(&h.EarningsThisWeek, &h.DeliveriesThisWeek, &h.PendingPayout); err != nil {
+		return nil, fmt.Errorf("delivery history aggregates: %w", err)
+	}
+	return &h, nil
+}
+
+// RouteStop is one stop on a rider's multi-stop active-delivery route.
+type RouteStop struct {
+	OrderID  uuid.UUID `json:"order_id"`
+	Customer string    `json:"customer_name"`
+	Address  string    `json:"address"`
+	RiderFee *float64  `json:"rider_fee,omitempty"`
+	IsUrgent bool      `json:"is_urgent"`
+	Lat      float64   `json:"lat"`
+	Lng      float64   `json:"lng"`
+}
+
+// MyRoute is the response for the rider's route-map screen. When the rider
+// has no active deliveries with a pin, Stops is empty and Route is nil —
+// callers must treat that as a valid, non-error result.
+type MyRoute struct {
+	Stops []RouteStop    `json:"stops"`
+	Route *routing.Route `json:"route,omitempty"`
+}
+
+// GetMyRoute builds a single multi-stop driving route covering ALL of this
+// rider's current active deliveries that have a pin, starting from the
+// rider's current position (riderLat/riderLng, a one-shot snapshot taken by
+// the client). Deliveries without delivery_lat/delivery_lng — possible for
+// orders assigned before this geolocation feature existed — are excluded
+// here rather than crashing the route call.
+//
+// Stop order matches ListMyDeliveries (is_urgent DESC, rider_assigned_at
+// ASC) — there is no route optimization/TSP in this version; that is a
+// known, acceptable simplification for now.
+func (s *RiderService) GetMyRoute(ctx context.Context, tenantID, riderID uuid.UUID, riderLat, riderLng float64) (*MyRoute, error) {
+	orders, err := s.ListMyDeliveries(ctx, tenantID, riderID)
+	if err != nil {
+		return nil, err
+	}
+
+	stops := make([]RouteStop, 0, len(orders))
+	waypoints := make([]routing.Waypoint, 0, len(orders)+1)
+	waypoints = append(waypoints, routing.Waypoint{Lat: riderLat, Lng: riderLng})
+	for _, o := range orders {
+		if o.DeliveryLat == nil || o.DeliveryLng == nil {
+			continue
+		}
+		stops = append(stops, RouteStop{
+			OrderID:  o.ID,
+			Customer: o.CustomerName,
+			Address:  o.ShippingAddress,
+			RiderFee: o.RiderFee,
+			IsUrgent: o.IsUrgent,
+			Lat:      *o.DeliveryLat,
+			Lng:      *o.DeliveryLng,
+		})
+		waypoints = append(waypoints, routing.Waypoint{Lat: *o.DeliveryLat, Lng: *o.DeliveryLng})
+	}
+
+	result := &MyRoute{Stops: stops}
+	if len(stops) == 0 {
+		// Nothing mappable — a valid empty result, not an error. Calling ORS
+		// with fewer than 2 waypoints would itself error.
+		return result, nil
+	}
+
+	if s.routeProvider == nil {
+		return nil, fmt.Errorf("%w: no routing provider configured", ErrRouteUnavailable)
+	}
+
+	route, err := s.routeProvider.GetRoute(ctx, waypoints)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrRouteUnavailable, err)
+	}
+	result.Route = route
+	return result, nil
+}
+
+// scanMyDeliveryRows scans the shared rider-delivery column set used by both
+// ListMyDeliveries and GetDeliveryHistory.
+func scanMyDeliveryRows(rows pgx.Rows) ([]shop.ShopOrder, error) {
 	var orders []shop.ShopOrder
 	for rows.Next() {
 		var o shop.ShopOrder
 		if err := rows.Scan(
 			&o.ID, &o.TenantID, &o.Status,
+			&o.CustomerName, &o.CustomerPhone,
+			&o.ShippingAddress, &o.ShippingCity,
+			&o.DeliveryLat, &o.DeliveryLng, &o.Total,
 			&o.RiderID, &o.RiderFee, &o.RiderAssignedAt, &o.RiderDeliveredAt, &o.RiderPaidAt,
 			&o.IsUrgent, &o.UrgentFee,
 		); err != nil {
-			return nil, fmt.Errorf("scan my delivery: %w", err)
+			return nil, fmt.Errorf("scan delivery row: %w", err)
 		}
 		orders = append(orders, o)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("my deliveries rows: %w", err)
+		return nil, fmt.Errorf("delivery rows: %w", err)
 	}
 	if orders == nil {
 		orders = []shop.ShopOrder{}
 	}
 	return orders, nil
+}
+
+// UpdateMyStatus narrowly updates only the status column on the rider's own
+// row. Unlike UpdateRider (full-replace, owner/employee-only), this is the
+// rider-self-service operation and never touches rate/capacity/active.
+func (s *RiderService) UpdateMyStatus(ctx context.Context, tenantID, riderID uuid.UUID, status rider.Status) (*rider.Rider, error) {
+	if status != rider.StatusAvailable && status != rider.StatusUnavailable {
+		return nil, rider.ErrInvalidStatus
+	}
+	row := s.pool.QueryRow(ctx, `
+		UPDATE riders
+		SET status = $3, updated_at = NOW()
+		WHERE id = $1 AND tenant_id = $2
+		RETURNING id, tenant_id, user_id, name, COALESCE(phone, ''), rate_per_delivery,
+		          status, max_concurrent_deliveries, last_assigned_at, active, created_at, updated_at`,
+		riderID, tenantID, status,
+	)
+	r, err := scanRider(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, rider.ErrRiderNotFound
+		}
+		return nil, fmt.Errorf("update my status: %w", err)
+	}
+	return r, nil
 }
 
 // ─── Private helpers ──────────────────────────────────────────────────────────

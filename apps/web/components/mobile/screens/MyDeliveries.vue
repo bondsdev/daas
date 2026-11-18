@@ -8,6 +8,8 @@ import {
   Truck,
   Navigation,
   MessageCircle,
+  Map as MapIcon,
+  ChevronRight,
 } from "lucide-vue-next";
 
 export interface MyDelivery {
@@ -53,6 +55,14 @@ function whatsappUrl(order: MyDelivery) {
   const digits = order.customer_phone.replace(/\D/g, "");
   return `https://wa.me/${digits}`;
 }
+
+// The route-map screen only makes sense when at least one assigned
+// delivery has a pin — otherwise there's nothing to map.
+const hasMappableDeliveries = computed(() =>
+  props.deliveries.some(
+    (d) => d.delivery_lat != null && d.delivery_lng != null,
+  ),
+);
 </script>
 
 <template>
@@ -82,86 +92,116 @@ function whatsappUrl(order: MyDelivery) {
       </p>
     </div>
 
-    <div v-else class="divide-y divide-border border-t border-border bg-white">
-      <MobileListItem
-        v-for="order in deliveries"
-        :key="order.id"
-        :chevron="false"
-        :accent="order.is_urgent ? 'danger' : 'none'"
+    <div v-else class="bg-white">
+      <NuxtLink
+        v-if="hasMappableDeliveries"
+        to="/my-deliveries/ruta"
+        class="no-min-tap mx-4 mt-3 flex items-center gap-3 rounded-2xl bg-primary px-4 py-3.5 text-white"
       >
-        <template #leading>
-          <div
-            class="flex size-11 items-center justify-center rounded-2xl"
-            :class="order.is_urgent ? 'bg-red-50' : 'bg-primary/10'"
-          >
-            <component
-              :is="order.is_urgent ? Zap : MapPin"
-              class="size-5"
-              :class="order.is_urgent ? 'text-red-500' : 'text-primary'"
-            />
-          </div>
-        </template>
-
-        <p class="truncate text-sm font-semibold leading-tight text-foreground">
-          {{ order.customer_name }}
-        </p>
-        <p class="mt-0.5 truncate text-xs text-muted-foreground">
-          {{ order.shipping_address }}
-          <span v-if="order.shipping_city">, {{ order.shipping_city }}</span>
-        </p>
-
-        <div class="mt-1.5 flex items-center gap-2">
-          <span
-            v-if="order.is_urgent"
-            class="rounded px-1.5 py-px text-[10px] font-bold bg-red-100 text-red-600"
-          >
-            URGENTE
-          </span>
-          <span
-            class="font-mono text-xs font-bold tabular-nums text-foreground"
-          >
-            {{ fmtCurrency(order.total) }}
-          </span>
-          <span
-            v-if="order.rider_fee != null"
-            class="text-[11px] text-muted-foreground"
-          >
-            · tu pago: {{ fmtCurrency(order.rider_fee) }}
-          </span>
-        </div>
-
-        <div class="mt-2 flex gap-1.5">
-          <a
-            :href="locationUrl(order)"
-            target="_blank"
-            rel="noopener"
-            class="no-min-tap flex h-9 flex-1 items-center justify-center gap-1.5 rounded-lg border border-input text-xs font-semibold text-foreground"
-          >
-            <Navigation class="size-3.5" />
-            {{ order.delivery_lat != null ? "Ver ubicación" : "Ver dirección" }}
-          </a>
-          <a
-            :href="whatsappUrl(order)"
-            target="_blank"
-            rel="noopener"
-            class="no-min-tap flex h-9 flex-1 items-center justify-center gap-1.5 rounded-lg border border-input text-xs font-semibold text-emerald-600"
-          >
-            <MessageCircle class="size-3.5" />
-            WhatsApp
-          </a>
-        </div>
-
-        <button
-          type="button"
-          :disabled="markingId === order.id"
-          class="no-min-tap mt-2 flex h-9 w-full items-center justify-center gap-1.5 rounded-lg bg-primary text-sm font-semibold text-white transition-opacity disabled:opacity-60"
-          @click="emit('markDelivered', order.id)"
+        <span
+          class="flex size-10 shrink-0 items-center justify-center rounded-xl bg-white/15"
         >
-          <Loader2 v-if="markingId === order.id" class="size-4 animate-spin" />
-          <CheckCircle2 v-else class="size-4" />
-          {{ markingId === order.id ? "Marcando…" : "Marcar entregado" }}
-        </button>
-      </MobileListItem>
+          <MapIcon class="size-5" />
+        </span>
+        <span class="min-w-0 flex-1">
+          <span class="block text-[13.5px] font-bold leading-tight">
+            Ver ruta de hoy
+          </span>
+          <span class="block text-[11.5px] text-white/75">
+            Un solo mapa con todas tus paradas
+          </span>
+        </span>
+        <ChevronRight class="size-4 shrink-0 text-white/70" />
+      </NuxtLink>
+
+      <div class="divide-y divide-border border-t border-border">
+        <MobileListItem
+          v-for="order in deliveries"
+          :key="order.id"
+          :chevron="false"
+          :accent="order.is_urgent ? 'danger' : 'none'"
+        >
+          <template #leading>
+            <div
+              class="flex size-11 items-center justify-center rounded-2xl"
+              :class="order.is_urgent ? 'bg-red-50' : 'bg-primary/10'"
+            >
+              <component
+                :is="order.is_urgent ? Zap : MapPin"
+                class="size-5"
+                :class="order.is_urgent ? 'text-red-500' : 'text-primary'"
+              />
+            </div>
+          </template>
+
+          <p
+            class="truncate text-sm font-semibold leading-tight text-foreground"
+          >
+            {{ order.customer_name }}
+          </p>
+          <p class="mt-0.5 truncate text-xs text-muted-foreground">
+            {{ order.shipping_address }}
+            <span v-if="order.shipping_city">, {{ order.shipping_city }}</span>
+          </p>
+
+          <div class="mt-1.5 flex items-center gap-2">
+            <span
+              v-if="order.is_urgent"
+              class="rounded px-1.5 py-px text-[10px] font-bold bg-red-100 text-red-600"
+            >
+              URGENTE
+            </span>
+            <span
+              class="font-mono text-xs font-bold tabular-nums text-foreground"
+            >
+              {{ fmtCurrency(order.total) }}
+            </span>
+            <span
+              v-if="order.rider_fee != null"
+              class="text-[11px] text-muted-foreground"
+            >
+              · tu pago: {{ fmtCurrency(order.rider_fee) }}
+            </span>
+          </div>
+
+          <div class="mt-2 flex gap-1.5">
+            <a
+              :href="locationUrl(order)"
+              target="_blank"
+              rel="noopener"
+              class="no-min-tap flex h-9 flex-1 items-center justify-center gap-1.5 rounded-lg border border-input text-xs font-semibold text-foreground"
+            >
+              <Navigation class="size-3.5" />
+              {{
+                order.delivery_lat != null ? "Ver ubicación" : "Ver dirección"
+              }}
+            </a>
+            <a
+              :href="whatsappUrl(order)"
+              target="_blank"
+              rel="noopener"
+              class="no-min-tap flex h-9 flex-1 items-center justify-center gap-1.5 rounded-lg border border-input text-xs font-semibold text-emerald-600"
+            >
+              <MessageCircle class="size-3.5" />
+              WhatsApp
+            </a>
+          </div>
+
+          <button
+            type="button"
+            :disabled="markingId === order.id"
+            class="no-min-tap mt-2 flex h-9 w-full items-center justify-center gap-1.5 rounded-lg bg-primary text-sm font-semibold text-white transition-opacity disabled:opacity-60"
+            @click="emit('markDelivered', order.id)"
+          >
+            <Loader2
+              v-if="markingId === order.id"
+              class="size-4 animate-spin"
+            />
+            <CheckCircle2 v-else class="size-4" />
+            {{ markingId === order.id ? "Marcando…" : "Marcar entregado" }}
+          </button>
+        </MobileListItem>
+      </div>
     </div>
   </MobileScreen>
 </template>

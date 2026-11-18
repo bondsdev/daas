@@ -114,6 +114,7 @@ export default defineNuxtConfig({
     "/suppliers/**": { ssr: false },
     "/reports/**": { ssr: false },
     "/settings/**": { ssr: false },
+    "/my-deliveries/**": { ssr: false },
   },
   // Rutas a pre-renderizar cuando NUXT_CAPACITOR=true
   ...(isCapacitorBuild && {

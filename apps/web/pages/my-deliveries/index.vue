@@ -50,5 +50,6 @@ onMounted(load);
       :marking-id="markingId"
       @mark-delivered="markDelivered"
     />
+    <MobileRiderBottomNav />
   </div>
 </template>

@@ -132,7 +132,11 @@ func (h *UserHandler) Invite(c echo.Context) error {
 		return WriteProblem(c, http.StatusInternalServerError, "internal-error", "failed to build invite request")
 	}
 
-	url := h.supabaseURL + "/auth/v1/admin/invite"
+	// Note: this is "/auth/v1/invite", not "/auth/v1/admin/invite" — the
+	// latter 404s. GoTrue (self-hosted and cloud) exposes the
+	// service-role-authenticated invite-by-email flow at the root "/invite"
+	// path, verified against a live local instance.
+	url := h.supabaseURL + "/auth/v1/invite"
 	httpReq, err := http.NewRequestWithContext(c.Request().Context(), http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return WriteProblem(c, http.StatusInternalServerError, "internal-error", "failed to create invite request")

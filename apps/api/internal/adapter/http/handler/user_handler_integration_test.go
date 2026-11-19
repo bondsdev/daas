@@ -22,7 +22,7 @@ import (
 )
 
 // fakeSupabaseAdmin is a minimal stand-in for the Supabase Admin API used by
-// Invite: POST /auth/v1/admin/invite creates the user, PUT /auth/v1/admin/users/{id}
+// Invite: POST /auth/v1/invite creates the user, PUT /auth/v1/admin/users/{id}
 // sets app_metadata. patchFails lets tests force the partial-failure path.
 type fakeSupabaseAdmin struct {
 	userID     string
@@ -34,7 +34,7 @@ type fakeSupabaseAdmin struct {
 func (f *fakeSupabaseAdmin) handler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/auth/v1/admin/invite":
+		case r.Method == http.MethodPost && r.URL.Path == "/auth/v1/invite":
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(map[string]string{"id": f.userID})

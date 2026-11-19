@@ -206,7 +206,7 @@ onMounted(async () => {
       useApiFetch<{ pos_search_mode?: PosSearchMode }>("/api/v1/tenants/me"),
     ]);
     products.value = productData ?? [];
-    searchMode.value = tenantData?.pos_search_mode ?? "barcode";
+    searchMode.value = tenantData?.pos_search_mode ?? "both";
   } finally {
     loadingProducts.value = false;
   }
@@ -218,7 +218,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="flex flex-col h-full min-h-screen bg-background">
+  <div class="flex flex-col h-full bg-background">
     <!-- Loading session check -->
     <div
       v-if="checkingSession"
@@ -272,7 +272,7 @@ onMounted(async () => {
     <!-- POS -->
     <div v-else class="flex flex-col flex-1 lg:flex-row overflow-hidden">
       <!-- ── Search / catalog ───────────────────────────────────────────── -->
-      <div class="flex-1 flex flex-col overflow-hidden lg:border-r">
+      <div class="flex-1 flex flex-col overflow-hidden lg:border-r min-h-0">
         <div class="px-4 sm:px-6 py-4 border-b bg-card space-y-3">
           <!-- Barcode scan input (barcode / both) -->
           <div
@@ -312,7 +312,7 @@ onMounted(async () => {
           </div>
         </div>
 
-        <div class="flex-1 overflow-y-auto px-4 sm:px-6 py-4">
+        <div class="flex-1 min-h-0 overflow-y-auto px-4 sm:px-6 py-4">
           <div
             v-if="loadingProducts"
             class="flex items-center justify-center py-20 text-muted-foreground"
@@ -379,7 +379,7 @@ onMounted(async () => {
 
       <!-- ── Cart + checkout ───────────────────────────────────────────── -->
       <div
-        class="w-full lg:max-w-md flex flex-col bg-card border-t lg:border-t-0"
+        class="w-full lg:max-w-md flex flex-col bg-card border-t lg:border-t-0 shrink-0"
       >
         <div class="px-5 py-4 border-b flex items-center justify-between">
           <div class="flex items-center gap-2">
@@ -395,7 +395,7 @@ onMounted(async () => {
         </div>
 
         <div
-          class="flex-1 overflow-y-auto flex flex-col max-h-[40vh] lg:max-h-none"
+          class="flex-1 min-h-0 overflow-y-auto flex flex-col max-h-[40vh] lg:max-h-none"
         >
           <div
             v-if="cart.length === 0"

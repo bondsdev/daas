@@ -9,6 +9,8 @@ import {
   Plus,
   Eye,
   EyeOff,
+  Store,
+  Bike,
 } from "lucide-vue-next";
 import { useAuthStore } from "~/stores/auth";
 import { useApiFetch } from "~/composables/useAuth";
@@ -64,12 +66,45 @@ async function saveTenant() {
   }
 }
 
+// ─── Tab 1 (cont.): Funcionalidades (self-service feature toggles) ──────────
+const storefrontEnabled = ref(store.tenant?.features?.storefront ?? false);
+const deliveryEnabled = ref(store.tenant?.deliveryEnabled ?? false);
+const savingFeature = ref<"storefront" | "delivery" | null>(null);
+
+async function toggleFeature(
+  feature: "storefront" | "delivery",
+  value: boolean,
+) {
+  savingFeature.value = feature;
+  try {
+    await useApiFetch("/api/v1/tenants/me/features", {
+      method: "PATCH",
+      body: { [feature]: value },
+    });
+    if (feature === "storefront") {
+      storefrontEnabled.value = value;
+    } else {
+      deliveryEnabled.value = value;
+    }
+    await store.fetchTenant();
+  } catch {
+    // revert the switch to its last known-good state on failure
+    if (feature === "storefront") {
+      storefrontEnabled.value = store.tenant?.features?.storefront ?? false;
+    } else {
+      deliveryEnabled.value = store.tenant?.deliveryEnabled ?? false;
+    }
+  } finally {
+    savingFeature.value = null;
+  }
+}
+
 // ─── Tab 2: Usuarios ─────────────────────────────────────────────────────────
 interface UserRecord {
   id: string;
   tenant_id: string;
   email: string;
-  role: "owner" | "employee";
+  role: "owner" | "employee" | "rider";
   active: boolean;
   created_at: string;
 }
@@ -79,7 +114,7 @@ const loadingUsers = ref(false);
 const togglingUserId = ref<string | null>(null);
 const inviteDialogOpen = ref(false);
 const inviteEmail = ref("");
-const inviteRole = ref<"employee" | "owner">("employee");
+const inviteRole = ref<"employee" | "rider">("employee");
 const inviting = ref(false);
 const inviteError = ref("");
 
@@ -368,6 +403,70 @@ onMounted(() => {
             </template>
           </div>
         </div>
+
+        <!-- Funcionalidades (self-service feature toggles) -->
+        <div class="rounded-xl border bg-card shadow-sm max-w-2xl mt-6">
+          <div class="px-6 py-5 border-b">
+            <h2 class="text-lg font-bold font-heading text-foreground">
+              Funcionalidades
+            </h2>
+            <p class="text-xs text-muted-foreground mt-1">
+              Habilitá o deshabilitá funcionalidades para tu empresa
+            </p>
+          </div>
+
+          <div class="px-6 py-5 space-y-5">
+            <div class="flex items-center justify-between gap-4">
+              <div class="flex items-center gap-3">
+                <div
+                  class="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0"
+                >
+                  <Store class="w-5 h-5 text-primary" />
+                </div>
+                <div>
+                  <p class="text-sm font-semibold text-foreground">
+                    Tienda online
+                  </p>
+                  <p class="text-xs text-muted-foreground">
+                    Habilita el catálogo público y pedidos online en /t/{{
+                      store.tenant?.slug ?? "tu-slug"
+                    }}
+                  </p>
+                </div>
+              </div>
+              <Switch
+                :model-value="storefrontEnabled"
+                :disabled="savingFeature === 'storefront'"
+                class="flex-shrink-0"
+                @update:model-value="toggleFeature('storefront', $event)"
+              />
+            </div>
+
+            <div class="flex items-center justify-between gap-4">
+              <div class="flex items-center gap-3">
+                <div
+                  class="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0"
+                >
+                  <Bike class="w-5 h-5 text-primary" />
+                </div>
+                <div>
+                  <p class="text-sm font-semibold text-foreground">
+                    Delivery / Motorizados
+                  </p>
+                  <p class="text-xs text-muted-foreground">
+                    Habilita la gestión de motorizados y entregas a domicilio
+                  </p>
+                </div>
+              </div>
+              <Switch
+                :model-value="deliveryEnabled"
+                :disabled="savingFeature === 'delivery'"
+                class="flex-shrink-0"
+                @update:model-value="toggleFeature('delivery', $event)"
+              />
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- Tab: Usuarios -->
@@ -443,7 +542,13 @@ onMounted(() => {
                           : 'bg-muted text-muted-foreground',
                       ]"
                     >
-                      {{ u.role === "owner" ? "Propietario" : "Empleado" }}
+                      {{
+                        u.role === "owner"
+                          ? "Propietario"
+                          : u.role === "rider"
+                            ? "Repartidor"
+                            : "Empleado"
+                      }}
                     </span>
                   </td>
                   <td class="px-6 py-4">
@@ -521,7 +626,7 @@ onMounted(() => {
                 class="relative z-10 w-full max-w-md bg-white rounded-xl shadow-xl p-6"
               >
                 <h3 class="text-xl font-bold font-heading text-foreground mb-4">
-                  Invitar empleado
+                  Invitar usuario
                 </h3>
 
                 <div class="space-y-4">
@@ -536,9 +641,26 @@ onMounted(() => {
                       id="invite-email"
                       v-model="inviteEmail"
                       type="email"
-                      placeholder="empleado@empresa.com"
+                      placeholder="usuario@empresa.com"
                       class="w-full h-11 px-4 border rounded-lg text-base transition-all duration-200 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 placeholder:text-muted-foreground bg-white"
                     />
+                  </div>
+
+                  <div>
+                    <label
+                      for="invite-role"
+                      class="block text-sm font-semibold text-foreground mb-1.5"
+                    >
+                      Rol
+                    </label>
+                    <select
+                      id="invite-role"
+                      v-model="inviteRole"
+                      class="w-full h-11 px-4 border rounded-lg text-base transition-all duration-200 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 bg-white cursor-pointer"
+                    >
+                      <option value="employee">Empleado</option>
+                      <option value="rider">Repartidor</option>
+                    </select>
                   </div>
 
                   <div

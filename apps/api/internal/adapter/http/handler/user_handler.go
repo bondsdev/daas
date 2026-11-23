@@ -3,6 +3,7 @@ package handler
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"time"
 
@@ -147,6 +148,8 @@ func (h *UserHandler) Invite(c echo.Context) error {
 
 	resp, err := h.httpClient.Do(httpReq)
 	if err != nil {
+		log.Error().Err(err).Str("email", req.Email).
+			Msg("invite: request to supabase /auth/v1/invite failed")
 		return WriteProblem(c, http.StatusBadGateway, "auth-unavailable", "authentication service unavailable")
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -155,6 +158,10 @@ func (h *UserHandler) Invite(c echo.Context) error {
 		return WriteProblem(c, http.StatusConflict, "duplicate-email", "email already registered")
 	}
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		log.Error().Str("email", req.Email).Int("supabase_status", resp.StatusCode).
+			Str("supabase_body", string(body)).
+			Msg("invite: supabase /auth/v1/invite returned a non-success status")
 		return WriteProblem(c, http.StatusInternalServerError, "internal-error",
 			"failed to send invite via auth service")
 	}

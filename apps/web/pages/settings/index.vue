@@ -11,6 +11,8 @@ import {
   EyeOff,
   Store,
   Bike,
+  Copy,
+  Check,
 } from "lucide-vue-next";
 import { useAuthStore } from "~/stores/auth";
 import { useApiFetch } from "~/composables/useAuth";
@@ -114,9 +116,25 @@ const loadingUsers = ref(false);
 const togglingUserId = ref<string | null>(null);
 const inviteDialogOpen = ref(false);
 const inviteEmail = ref("");
+const inviteDraftPassword = ref("");
 const inviteRole = ref<"employee" | "rider">("employee");
 const inviting = ref(false);
 const inviteError = ref("");
+const inviteSuccess = ref<{ email: string; password: string } | null>(null);
+const showInvitePassword = ref(false);
+const copiedInviteField = ref<"email" | "password" | null>(null);
+
+async function copyInviteField(field: "email" | "password", value: string) {
+  try {
+    await navigator.clipboard.writeText(value);
+    copiedInviteField.value = field;
+    setTimeout(() => {
+      if (copiedInviteField.value === field) copiedInviteField.value = null;
+    }, 1500);
+  } catch {
+    // clipboard unavailable — ignore silently, value is still shown on screen
+  }
+}
 
 async function fetchUsers() {
   loadingUsers.value = true;
@@ -150,23 +168,43 @@ async function sendInvite() {
     inviteError.value = "Ingresá un email válido";
     return;
   }
+  if (inviteDraftPassword.value.length < 6) {
+    inviteError.value = "La contraseña debe tener al menos 6 caracteres";
+    return;
+  }
   inviting.value = true;
   inviteError.value = "";
   try {
     await useApiFetch("/api/v1/users/invite", {
       method: "POST",
-      body: { email: inviteEmail.value, role: inviteRole.value },
+      body: {
+        email: inviteEmail.value,
+        password: inviteDraftPassword.value,
+        role: inviteRole.value,
+      },
     });
-    inviteDialogOpen.value = false;
-    inviteEmail.value = "";
+    inviteSuccess.value = {
+      email: inviteEmail.value,
+      password: inviteDraftPassword.value,
+    };
     await fetchUsers();
   } catch (err: unknown) {
     const apiError = err as { data?: { detail?: string } };
-    inviteError.value =
-      apiError?.data?.detail ?? "Error al enviar la invitación";
+    inviteError.value = apiError?.data?.detail ?? "Error al crear la cuenta";
   } finally {
     inviting.value = false;
   }
+}
+
+function closeInviteDialog() {
+  inviteDialogOpen.value = false;
+  inviteEmail.value = "";
+  inviteDraftPassword.value = "";
+  inviteRole.value = "employee";
+  inviteError.value = "";
+  inviteSuccess.value = null;
+  showInvitePassword.value = false;
+  copiedInviteField.value = null;
 }
 
 // ─── Tab 3: Integraciones ────────────────────────────────────────────────────
@@ -483,7 +521,7 @@ onMounted(() => {
               @click="inviteDialogOpen = true"
             >
               <Plus class="w-4 h-4" />
-              Invitar empleado
+              Crear usuario
             </button>
           </div>
 
@@ -620,16 +658,91 @@ onMounted(() => {
             >
               <div
                 class="absolute inset-0 bg-black/50"
-                @click="inviteDialogOpen = false"
+                @click="closeInviteDialog"
               />
               <div
                 class="relative z-10 w-full max-w-md bg-white rounded-xl shadow-xl p-6"
               >
                 <h3 class="text-xl font-bold font-heading text-foreground mb-4">
-                  Invitar usuario
+                  {{ inviteSuccess ? "Cuenta creada" : "Crear usuario" }}
                 </h3>
 
-                <div class="space-y-4">
+                <!-- Success confirmation panel -->
+                <div v-if="inviteSuccess" class="space-y-4">
+                  <p class="text-sm text-muted-foreground">
+                    La cuenta se creó correctamente. Compartí estas credenciales
+                    con el usuario; la contraseña no va a volver a mostrarse.
+                  </p>
+
+                  <div>
+                    <label
+                      class="block text-sm font-semibold text-foreground mb-1.5"
+                    >
+                      Email
+                    </label>
+                    <div
+                      class="flex items-center gap-2 h-11 px-4 border rounded-lg bg-muted/40"
+                    >
+                      <span class="flex-1 truncate text-base">{{
+                        inviteSuccess.email
+                      }}</span>
+                      <button
+                        type="button"
+                        class="text-muted-foreground hover:text-foreground cursor-pointer"
+                        @click="copyInviteField('email', inviteSuccess.email)"
+                      >
+                        <Check
+                          v-if="copiedInviteField === 'email'"
+                          class="w-4 h-4 text-green-600"
+                        />
+                        <Copy v-else class="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label
+                      class="block text-sm font-semibold text-foreground mb-1.5"
+                    >
+                      Contraseña
+                    </label>
+                    <div
+                      class="flex items-center gap-2 h-11 px-4 border rounded-lg bg-muted/40"
+                    >
+                      <span class="flex-1 truncate text-base font-mono">{{
+                        showInvitePassword
+                          ? inviteSuccess.password
+                          : "•".repeat(inviteSuccess.password.length)
+                      }}</span>
+                      <button
+                        type="button"
+                        class="text-muted-foreground hover:text-foreground cursor-pointer"
+                        @click="showInvitePassword = !showInvitePassword"
+                      >
+                        <component
+                          :is="showInvitePassword ? EyeOff : Eye"
+                          class="w-4 h-4"
+                        />
+                      </button>
+                      <button
+                        type="button"
+                        class="text-muted-foreground hover:text-foreground cursor-pointer"
+                        @click="
+                          copyInviteField('password', inviteSuccess.password)
+                        "
+                      >
+                        <Check
+                          v-if="copiedInviteField === 'password'"
+                          class="w-4 h-4 text-green-600"
+                        />
+                        <Copy v-else class="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Create user form -->
+                <div v-else class="space-y-4">
                   <div>
                     <label
                       for="invite-email"
@@ -644,6 +757,34 @@ onMounted(() => {
                       placeholder="usuario@empresa.com"
                       class="w-full h-11 px-4 border rounded-lg text-base transition-all duration-200 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 placeholder:text-muted-foreground bg-white"
                     />
+                  </div>
+
+                  <div>
+                    <label
+                      for="invite-password"
+                      class="block text-sm font-semibold text-foreground mb-1.5"
+                    >
+                      Contraseña
+                    </label>
+                    <div class="relative">
+                      <input
+                        id="invite-password"
+                        v-model="inviteDraftPassword"
+                        :type="showInvitePassword ? 'text' : 'password'"
+                        placeholder="Mínimo 6 caracteres"
+                        class="w-full h-11 px-4 pr-11 border rounded-lg text-base transition-all duration-200 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 placeholder:text-muted-foreground bg-white"
+                      />
+                      <button
+                        type="button"
+                        class="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground cursor-pointer"
+                        @click="showInvitePassword = !showInvitePassword"
+                      >
+                        <component
+                          :is="showInvitePassword ? EyeOff : Eye"
+                          class="w-4 h-4"
+                        />
+                      </button>
+                    </div>
                   </div>
 
                   <div>
@@ -675,26 +816,33 @@ onMounted(() => {
 
                 <div class="mt-6 flex justify-end gap-3">
                   <button
+                    v-if="inviteSuccess"
                     type="button"
-                    class="h-10 px-4 border text-muted-foreground text-sm font-semibold rounded-lg hover:bg-muted transition-all duration-200 cursor-pointer"
-                    @click="
-                      inviteDialogOpen = false;
-                      inviteError = '';
-                    "
+                    class="h-10 px-5 bg-primary text-white text-sm font-semibold rounded-lg hover:opacity-90 transition-all duration-200 cursor-pointer"
+                    @click="closeInviteDialog"
                   >
-                    Cancelar
+                    Cerrar
                   </button>
-                  <button
-                    type="button"
-                    :disabled="inviting"
-                    class="flex items-center gap-2 h-10 px-5 bg-primary text-white text-sm font-semibold rounded-lg hover:opacity-90 transition-all duration-200 cursor-pointer disabled:opacity-50"
-                    @click="sendInvite"
-                  >
-                    <Loader2 v-if="inviting" class="w-4 h-4 animate-spin" />
-                    <span>{{
-                      inviting ? "Enviando..." : "Enviar invitacion"
-                    }}</span>
-                  </button>
+                  <template v-else>
+                    <button
+                      type="button"
+                      class="h-10 px-4 border text-muted-foreground text-sm font-semibold rounded-lg hover:bg-muted transition-all duration-200 cursor-pointer"
+                      @click="closeInviteDialog"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      :disabled="inviting"
+                      class="flex items-center gap-2 h-10 px-5 bg-primary text-white text-sm font-semibold rounded-lg hover:opacity-90 transition-all duration-200 cursor-pointer disabled:opacity-50"
+                      @click="sendInvite"
+                    >
+                      <Loader2 v-if="inviting" class="w-4 h-4 animate-spin" />
+                      <span>{{
+                        inviting ? "Creando..." : "Crear cuenta"
+                      }}</span>
+                    </button>
+                  </template>
                 </div>
               </div>
             </div>

@@ -22,8 +22,9 @@ import (
 )
 
 // fakeSupabaseAdmin is a minimal stand-in for the Supabase Admin API used by
-// Invite: POST /auth/v1/invite creates the user, PUT /auth/v1/admin/users/{id}
-// sets app_metadata. patchFails lets tests force the partial-failure path.
+// Invite: POST /auth/v1/admin/users creates the user directly with a
+// password, PUT /auth/v1/admin/users/{id} sets app_metadata. patchFails lets
+// tests force the partial-failure path.
 type fakeSupabaseAdmin struct {
 	userID     string
 	patchFails bool
@@ -34,7 +35,7 @@ type fakeSupabaseAdmin struct {
 func (f *fakeSupabaseAdmin) handler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/auth/v1/invite":
+		case r.Method == http.MethodPost && r.URL.Path == "/auth/v1/admin/users":
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(map[string]string{"id": f.userID})
@@ -77,7 +78,7 @@ func TestUserHandler_Invite_CreatesTenantUserAndMetadata(t *testing.T) {
 	h := handler.NewUserHandler(pool, tenantSvc, srv.URL, "service-role-key")
 
 	c, rec := newInviteCtx(http.MethodPost, "/api/v1/users/invite", tenantID.String(),
-		[]byte(`{"email":"newuser@example.com"}`))
+		[]byte(`{"email":"newuser@example.com","password":"secret1"}`))
 
 	if err := h.Invite(c); err != nil {
 		t.Fatalf("Invite: %v", err)
@@ -121,7 +122,7 @@ func TestUserHandler_Invite_RiderRole_CreatesTenantUserWithRiderRole(t *testing.
 	h := handler.NewUserHandler(pool, tenantSvc, srv.URL, "service-role-key")
 
 	c, rec := newInviteCtx(http.MethodPost, "/api/v1/users/invite", tenantID.String(),
-		[]byte(`{"email":"rider@example.com","role":"rider"}`))
+		[]byte(`{"email":"rider@example.com","password":"secret1","role":"rider"}`))
 
 	if err := h.Invite(c); err != nil {
 		t.Fatalf("Invite: %v", err)
@@ -159,7 +160,7 @@ func TestUserHandler_Invite_MetadataPatchFails_ReturnsPartialFailure(t *testing.
 	h := handler.NewUserHandler(pool, tenantSvc, srv.URL, "service-role-key")
 
 	c, rec := newInviteCtx(http.MethodPost, "/api/v1/users/invite", tenantID.String(),
-		[]byte(`{"email":"partial@example.com"}`))
+		[]byte(`{"email":"partial@example.com","password":"secret1"}`))
 
 	if err := h.Invite(c); err != nil {
 		t.Fatalf("Invite: %v", err)

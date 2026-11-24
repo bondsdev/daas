@@ -86,7 +86,7 @@ func (s *TenantService) Register(ctx context.Context, req RegisterRequest) (*Reg
 	}
 
 	// Step 2: create Supabase Auth user.
-	supabaseUID, err := s.createSupabaseUser(ctx, req.Email, req.Password)
+	supabaseUID, err := s.CreateSupabaseUser(ctx, req.Email, req.Password)
 	if err != nil {
 		return nil, err
 	}
@@ -178,9 +178,9 @@ type supabaseUserResponse struct {
 	ID string `json:"id"`
 }
 
-// createSupabaseUser calls the Supabase Admin API to create an Auth user.
+// CreateSupabaseUser calls the Supabase Admin API to create an Auth user.
 // Returns the Supabase user UUID string.
-func (s *TenantService) createSupabaseUser(ctx context.Context, email, password string) (uuid.UUID, error) {
+func (s *TenantService) CreateSupabaseUser(ctx context.Context, email, password string) (uuid.UUID, error) {
 	body := supabaseCreateUserRequest{Email: email, Password: password, EmailConfirm: true}
 	bodyBytes, err := json.Marshal(body)
 	if err != nil {

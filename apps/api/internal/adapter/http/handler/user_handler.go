@@ -1,9 +1,6 @@
 package handler
 
 import (
-	"bytes"
-	"encoding/json"
-	"io"
 	"net/http"
 	"time"
 
@@ -15,6 +12,7 @@ import (
 
 	mw "github.com/danzt/daas/api/internal/adapter/http/middleware"
 	"github.com/danzt/daas/api/internal/app"
+	"github.com/danzt/daas/api/internal/domain/tenant"
 )
 
 // UserHandler handles user management endpoints.
@@ -93,13 +91,19 @@ func (h *UserHandler) List(c echo.Context) error {
 // inviteRequest is the JSON body for POST /api/v1/users/invite.
 // Role is optional: empty defaults to "employee". Only "employee" and
 // "rider" are invitable — "owner" is never assignable via invite.
+//
+// Password is required: accounts are created directly with a password
+// (no magic-link email), since Supabase Cloud's default email service
+// is rate-limited and no custom SMTP provider is configured yet.
 type inviteRequest struct {
-	Email string `json:"email"`
-	Role  string `json:"role,omitempty"`
+	Email    string `json:"email"`
+	Password string `json:"password"`
+	Role     string `json:"role,omitempty"`
 }
 
 // Invite handles POST /api/v1/users/invite.
-// Sends a Supabase magic-link invite to the given email.
+// Creates a Supabase Auth user directly with the given email/password
+// (no email is sent) and links it to the tenant.
 // Requires owner role (enforced by OwnerGuard middleware).
 func (h *UserHandler) Invite(c echo.Context) error {
 	tenantID, _ := c.Get(string(mw.ContextKeyTenantID)).(string)
@@ -114,6 +118,9 @@ func (h *UserHandler) Invite(c echo.Context) error {
 	if req.Email == "" {
 		return WriteProblem(c, http.StatusUnprocessableEntity, "validation-error", "email is required")
 	}
+	if len(req.Password) < 6 {
+		return WriteProblem(c, http.StatusUnprocessableEntity, "validation-error", "password must be at least 6 characters")
+	}
 
 	role := req.Role
 	if role == "" {
@@ -123,72 +130,23 @@ func (h *UserHandler) Invite(c echo.Context) error {
 		return WriteProblem(c, http.StatusUnprocessableEntity, "validation-error", "role must be employee or rider")
 	}
 
-	// Call Supabase Admin API to send invite.
-	payload := map[string]interface{}{
-		"email": req.Email,
-		"data":  map[string]interface{}{"tenant_id": tenantID, "role": role},
-	}
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return WriteProblem(c, http.StatusInternalServerError, "internal-error", "failed to build invite request")
-	}
-
-	// Note: this is "/auth/v1/invite", not "/auth/v1/admin/invite" — the
-	// latter 404s. GoTrue (self-hosted and cloud) exposes the
-	// service-role-authenticated invite-by-email flow at the root "/invite"
-	// path, verified against a live local instance.
-	url := h.supabaseURL + "/auth/v1/invite"
-	httpReq, err := http.NewRequestWithContext(c.Request().Context(), http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return WriteProblem(c, http.StatusInternalServerError, "internal-error", "failed to create invite request")
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+h.serviceRoleKey)
-	httpReq.Header.Set("apikey", h.serviceRoleKey)
-
-	resp, err := h.httpClient.Do(httpReq)
-	if err != nil {
-		log.Error().Err(err).Str("email", req.Email).
-			Msg("invite: request to supabase /auth/v1/invite failed")
-		return WriteProblem(c, http.StatusBadGateway, "auth-unavailable", "authentication service unavailable")
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode == http.StatusUnprocessableEntity || resp.StatusCode == http.StatusConflict {
-		return WriteProblem(c, http.StatusConflict, "duplicate-email", "email already registered")
-	}
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		log.Error().Str("email", req.Email).Int("supabase_status", resp.StatusCode).
-			Str("supabase_body", string(body)).
-			Msg("invite: supabase /auth/v1/invite returned a non-success status")
-		return WriteProblem(c, http.StatusInternalServerError, "internal-error",
-			"failed to send invite via auth service")
-	}
-
-	var invited struct {
-		ID string `json:"id"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&invited); err != nil {
-		log.Error().Err(err).Str("email", req.Email).
-			Msg("invite: supabase user created but failed to decode response — manual follow-up needed")
-		return WriteProblem(c, http.StatusInternalServerError, "internal-error",
-			"invite partially succeeded: user created in auth but local setup failed; contact support")
-	}
-	supabaseUID, err := uuid.Parse(invited.ID)
-	if err != nil {
-		log.Error().Err(err).Str("email", req.Email).Str("raw_id", invited.ID).
-			Msg("invite: supabase user created but returned invalid UID — manual follow-up needed")
-		return WriteProblem(c, http.StatusInternalServerError, "internal-error",
-			"invite partially succeeded: user created in auth but local setup failed; contact support")
-	}
 	tenantUUID, err := uuid.Parse(tenantID)
 	if err != nil {
 		return WriteProblem(c, http.StatusInternalServerError, "internal-error", "invalid tenant context")
 	}
 
+	supabaseUID, err := h.tenantSvc.CreateSupabaseUser(c.Request().Context(), req.Email, req.Password)
+	if err != nil {
+		if err == tenant.ErrDuplicateEmail {
+			return WriteProblem(c, http.StatusConflict, "duplicate-email", "email already registered")
+		}
+		log.Error().Err(err).Str("email", req.Email).
+			Msg("invite: failed to create supabase user via /auth/v1/admin/users")
+		return WriteProblem(c, http.StatusInternalServerError, "internal-error", "failed to create rider/employee account")
+	}
+
 	if err := h.tenantSvc.SetTenantMetadata(c.Request().Context(), supabaseUID, tenantUUID, role); err != nil {
-		log.Error().Err(err).Str("email", req.Email).Str("supabase_uid", invited.ID).
+		log.Error().Err(err).Str("email", req.Email).Str("supabase_uid", supabaseUID.String()).
 			Msg("invite: supabase user created but app_metadata PATCH failed — manual follow-up needed")
 		return WriteProblem(c, http.StatusInternalServerError, "internal-error",
 			"invite partially succeeded: user created in auth but local setup failed; contact support")
@@ -199,14 +157,14 @@ func (h *UserHandler) Invite(c echo.Context) error {
          VALUES ($1, $2, $3, $4)`,
 		tenantUUID, supabaseUID, req.Email, role,
 	); err != nil {
-		log.Error().Err(err).Str("email", req.Email).Str("supabase_uid", invited.ID).
+		log.Error().Err(err).Str("email", req.Email).Str("supabase_uid", supabaseUID.String()).
 			Msg("invite: supabase user created and metadata set but tenant_users insert failed — manual follow-up needed")
 		return WriteProblem(c, http.StatusInternalServerError, "internal-error",
 			"invite partially succeeded: user created in auth but local setup failed; contact support")
 	}
 
 	return c.JSON(http.StatusOK, map[string]string{
-		"message": "invite sent to " + req.Email,
+		"message": "account created for " + req.Email,
 	})
 }
 

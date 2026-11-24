@@ -38,7 +38,7 @@ func doInvite(t *testing.T, h *handler.UserHandler, body map[string]string) *htt
 
 func TestUserHandler_Invite_OwnerRoleRejected(t *testing.T) {
 	h := handler.NewUserHandler(nil, nil, "http://unused", "unused-key")
-	rec := doInvite(t, h, map[string]string{"email": "a@example.com", "role": "owner"})
+	rec := doInvite(t, h, map[string]string{"email": "a@example.com", "password": "secret1", "role": "owner"})
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, want %d, body = %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
 	}
@@ -46,7 +46,28 @@ func TestUserHandler_Invite_OwnerRoleRejected(t *testing.T) {
 
 func TestUserHandler_Invite_InvalidRoleRejected(t *testing.T) {
 	h := handler.NewUserHandler(nil, nil, "http://unused", "unused-key")
-	rec := doInvite(t, h, map[string]string{"email": "a@example.com", "role": "superadmin"})
+	rec := doInvite(t, h, map[string]string{"email": "a@example.com", "password": "secret1", "role": "superadmin"})
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d, body = %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+	}
+}
+
+// TestUserHandler_Invite_PasswordTooShortRejected and
+// TestUserHandler_Invite_PasswordMissingRejected validate password length
+// BEFORE Invite ever calls Supabase or the DB, so they run as fast unit
+// tests with no pool/Supabase server needed.
+
+func TestUserHandler_Invite_PasswordTooShortRejected(t *testing.T) {
+	h := handler.NewUserHandler(nil, nil, "http://unused", "unused-key")
+	rec := doInvite(t, h, map[string]string{"email": "a@example.com", "password": "abc12"})
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d, body = %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+	}
+}
+
+func TestUserHandler_Invite_PasswordMissingRejected(t *testing.T) {
+	h := handler.NewUserHandler(nil, nil, "http://unused", "unused-key")
+	rec := doInvite(t, h, map[string]string{"email": "a@example.com"})
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, want %d, body = %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
 	}

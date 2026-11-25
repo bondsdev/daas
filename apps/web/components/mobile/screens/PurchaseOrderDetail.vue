@@ -16,6 +16,7 @@ interface POLine {
   description: string;
   quantity_ordered: number;
   unit_cost: number;
+  unit: string;
   subtotal: number;
 }
 
@@ -29,6 +30,7 @@ interface PurchaseOrder {
   id: string;
   status: "draft" | "ordered" | "received" | "cancelled";
   notes: string;
+  currency: "VES" | "USD";
   total: number;
   ordered_at: string | null;
   received_at: string | null;
@@ -141,12 +143,40 @@ function fmtDate(d: string | null) {
   });
 }
 
+// For date-only fields (e.g. "2026-11-20", no time component). Parsing those
+// through `new Date(str)` reads them as UTC midnight, which displays as the
+// previous day in negative-UTC-offset zones (Venezuela, UTC-4). Building the
+// Date from the split components uses the local-time constructor instead.
+function fmtDateOnly(d: string | null | undefined) {
+  if (!d) return "—";
+  const [y, m, day] = d.slice(0, 10).split("-").map(Number);
+  return new Date(y, m - 1, day).toLocaleDateString("es-VE", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
 function fmtCurrency(n: number) {
   return new Intl.NumberFormat("es-VE", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(n);
 }
+
+// Discrepancy trace (point 5): the PO total is frozen at creation and never
+// auto-corrected. When an invoice is later recorded with a different amount,
+// surface it as a display-only warning instead of silently losing the gap.
+const invoiceRecorded = computed(() => !!props.po?.supplier_invoice_number);
+const invoiceRecordedTotal = computed(
+  () =>
+    Number(props.po?.supplier_invoice_tax_base ?? 0) +
+    Number(props.po?.supplier_invoice_tax_amount ?? 0),
+);
+const invoiceDiscrepancy = computed(() => {
+  if (!props.po || !invoiceRecorded.value) return 0;
+  return invoiceRecordedTotal.value - props.po.total;
+});
 
 const hasActionBar = computed(
   () => props.po && !["received", "cancelled"].includes(props.po.status),
@@ -190,7 +220,7 @@ const hasActionBar = computed(
 
           <div>
             <p class="text-2xl font-black tabular-nums text-foreground">
-              {{ fmtCurrency(po.total) }}
+              {{ fmtCurrency(po.total) }} {{ po.currency ?? "VES" }}
             </p>
             <p class="mt-1 text-sm font-semibold text-foreground">
               {{ po.supplier?.name ?? "Proveedor desconocido" }}
@@ -201,6 +231,13 @@ const hasActionBar = computed(
             >
               RIF: {{ po.supplier.rif }}
             </p>
+            <NuxtLink
+              v-if="po.status === 'draft'"
+              :to="`/suppliers/purchase-orders?edit=${po.id}`"
+              class="mt-2 inline-flex items-center gap-1.5 text-sm font-semibold text-primary active:opacity-70"
+            >
+              <Pencil class="size-3.5" /> Editar orden
+            </NuxtLink>
           </div>
 
           <div
@@ -245,6 +282,23 @@ const hasActionBar = computed(
         </div>
       </div>
 
+      <!-- Discrepancy trace (point 5): display-only, never auto-corrects total -->
+      <div v-if="invoiceRecorded && invoiceDiscrepancy !== 0" class="px-4 pt-3">
+        <div
+          class="flex items-start gap-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800"
+        >
+          <AlertTriangle class="size-4 shrink-0 mt-0.5" />
+          <span>
+            Desvío con la factura:
+            <strong
+              >{{ invoiceDiscrepancy > 0 ? "+" : ""
+              }}{{ fmtCurrency(invoiceDiscrepancy) }}
+              {{ po.currency ?? "VES" }}</strong
+            >. El total de la orden no cambia automáticamente.
+          </span>
+        </div>
+      </div>
+
       <!-- Lines -->
       <MobileSectionHeader
         :title="`Líneas (${po.lines?.length ?? 0})`"
@@ -266,7 +320,7 @@ const hasActionBar = computed(
               {{ line.description }}
             </p>
             <p class="text-[11px] text-muted-foreground">
-              {{ fmtCurrency(line.unit_cost) }} c/u
+              {{ line.unit }} · {{ fmtCurrency(line.unit_cost) }} c/u
             </p>
           </div>
           <span
@@ -279,7 +333,7 @@ const hasActionBar = computed(
         <div class="flex items-center justify-between px-4 py-3.5">
           <span class="text-sm font-bold text-foreground">Total</span>
           <span class="font-mono text-lg font-black tabular-nums text-primary">
-            {{ fmtCurrency(po.total) }}
+            {{ fmtCurrency(po.total) }} {{ po.currency ?? "VES" }}
           </span>
         </div>
       </div>
@@ -310,7 +364,7 @@ const hasActionBar = computed(
             <div>
               <p class="text-[11px] text-muted-foreground">Fecha</p>
               <p class="font-medium text-foreground">
-                {{ fmtDate(po.supplier_invoice_date) }}
+                {{ fmtDateOnly(po.supplier_invoice_date) }}
               </p>
             </div>
             <div>

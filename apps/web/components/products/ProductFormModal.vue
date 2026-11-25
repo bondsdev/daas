@@ -15,6 +15,7 @@ export interface Product {
   internal_price?: number;
   price_usd?: number;
   tax_rate?: number;
+  unit?: string;
   active: boolean;
   image_url?: string;
   created_at: string;
@@ -58,6 +59,7 @@ const fiscalPrice = ref<string>("");
 const internalPrice = ref<string>("");
 const priceUsd = ref<string>("");
 const taxRate = ref<string>("");
+const unit = ref<string>("unidad");
 
 // True when the USD price field holds a valid, positive value — in that
 // case internal_price is a system-computed value (BCV rate), not editable.
@@ -105,6 +107,7 @@ function resetForm() {
     internalPrice.value = props.product.internal_price?.toString() ?? "";
     priceUsd.value = props.product.price_usd?.toString() ?? "";
     taxRate.value = props.product.tax_rate?.toString() ?? "";
+    unit.value = props.product.unit ?? "unidad";
     existingImageURL.value = props.product.image_url ?? "";
   } else {
     name.value = "";
@@ -118,6 +121,7 @@ function resetForm() {
     internalPrice.value = "";
     priceUsd.value = "";
     taxRate.value = "";
+    unit.value = "unidad";
     existingImageURL.value = "";
   }
   errors.value = {};
@@ -241,6 +245,7 @@ async function handleSave() {
     if (barcode.value.trim()) body.barcode = barcode.value.trim();
     if (description.value.trim()) body.description = description.value.trim();
     if (categoryId.value) body.category_id = categoryId.value;
+    body.unit = unit.value.trim() || "unidad";
 
     if (isFiscal.value) {
       body.fiscal_price = parseFloat(fiscalPrice.value);
@@ -435,6 +440,30 @@ function handleClose() {
                 class="w-full h-11 px-4 border border-input rounded-lg text-base transition-all duration-200 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 placeholder:text-muted-foreground"
               />
             </div>
+          </div>
+
+          <!-- Unit of measure -->
+          <div>
+            <label
+              for="product-unit"
+              class="block text-sm font-semibold text-foreground mb-1.5"
+            >
+              Unidad de medida
+            </label>
+            <select
+              id="product-unit"
+              v-model="unit"
+              class="w-full h-11 px-4 border border-input rounded-lg text-base transition-all duration-200 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+            >
+              <option value="unidad">Unidad</option>
+              <option value="kg">Kilogramo (kg)</option>
+              <option value="g">Gramo (g)</option>
+              <option value="l">Litro (l)</option>
+              <option value="ml">Mililitro (ml)</option>
+              <option value="caja">Caja</option>
+              <option value="paquete">Paquete</option>
+              <option value="saco">Saco</option>
+            </select>
           </div>
 
           <!-- Price fields — conditional on fiscal type -->

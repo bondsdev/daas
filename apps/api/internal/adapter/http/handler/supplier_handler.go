@@ -53,11 +53,22 @@ type createPOLineReq struct {
 	Description string  `json:"description"`
 	Quantity    float64 `json:"quantity"`
 	UnitCost    float64 `json:"unit_cost"`
+	Unit        string  `json:"unit,omitempty"`
 }
 
 type createPOReq struct {
 	SupplierID string            `json:"supplier_id"`
 	Notes      string            `json:"notes"`
+	Currency   string            `json:"currency,omitempty"`
+	Lines      []createPOLineReq `json:"lines"`
+}
+
+// updatePOReq is the body for PUT /purchase-orders/:id — same shape as
+// createPOReq, used to replace a draft PO's supplier/notes/currency/lines.
+type updatePOReq struct {
+	SupplierID string            `json:"supplier_id"`
+	Notes      string            `json:"notes"`
+	Currency   string            `json:"currency,omitempty"`
 	Lines      []createPOLineReq `json:"lines"`
 }
 
@@ -346,12 +357,44 @@ func (h *SupplierHandler) CreatePO(c echo.Context) error {
 		return WriteProblem(c, http.StatusBadRequest, "bad-request", err.Error())
 	}
 	po, err := h.svc.CreatePO(c.Request().Context(), tenantID, supabaseUID, supplier.CreatePORequest{
-		SupplierID: supplierID, Notes: body.Notes, Lines: lines,
+		SupplierID: supplierID, Notes: body.Notes, Currency: body.Currency, Lines: lines,
 	})
 	if err != nil {
 		return mapSupplierError(c, err)
 	}
 	return c.JSON(http.StatusCreated, po)
+}
+
+// UpdatePO handles PUT /api/v1/purchase-orders/:id — full replace of a draft
+// PO's supplier, notes, currency and lines.
+func (h *SupplierHandler) UpdatePO(c echo.Context) error {
+	tenantID, err := getTenantID(c)
+	if err != nil {
+		return WriteProblem(c, http.StatusForbidden, "forbidden", "tenant context missing")
+	}
+	poID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return WriteProblem(c, http.StatusBadRequest, "bad-request", "invalid po id")
+	}
+	var body updatePOReq
+	if err := c.Bind(&body); err != nil {
+		return WriteProblem(c, http.StatusBadRequest, "bad-request", "invalid body")
+	}
+	supplierID, err := uuid.Parse(body.SupplierID)
+	if err != nil {
+		return WriteProblem(c, http.StatusBadRequest, "bad-request", "invalid supplier_id")
+	}
+	lines, err := buildPOLines(body.Lines)
+	if err != nil {
+		return WriteProblem(c, http.StatusBadRequest, "bad-request", err.Error())
+	}
+	po, err := h.svc.UpdatePO(c.Request().Context(), tenantID, poID, supplier.UpdatePORequest{
+		SupplierID: supplierID, Notes: body.Notes, Currency: body.Currency, Lines: lines,
+	})
+	if err != nil {
+		return mapSupplierError(c, err)
+	}
+	return c.JSON(http.StatusOK, po)
 }
 
 func (h *SupplierHandler) ListPOs(c echo.Context) error {
@@ -513,7 +556,7 @@ func buildPOLines(raw []createPOLineReq) ([]supplier.CreatePOLineRequest, error)
 		}
 		lines = append(lines, supplier.CreatePOLineRequest{
 			ProductID: pid, Description: r.Description,
-			Quantity: r.Quantity, UnitCost: r.UnitCost,
+			Quantity: r.Quantity, UnitCost: r.UnitCost, Unit: r.Unit,
 		})
 	}
 	return lines, nil

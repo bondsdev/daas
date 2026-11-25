@@ -18,6 +18,7 @@ type Product struct {
 	Name          string
 	SKU           string
 	Barcode       string
+	Unit          string
 	Description   string
 	CategoryID    *uuid.UUID
 	IsFiscal      bool

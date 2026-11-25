@@ -29,6 +29,7 @@ type CreateProductRequest struct {
 	Name          string
 	SKU           string
 	Barcode       string
+	Unit          string
 	Description   string
 	CategoryID    *uuid.UUID
 	IsFiscal      bool
@@ -46,6 +47,7 @@ type UpdateProductRequest struct {
 	Name          string
 	SKU           string
 	Barcode       string
+	Unit          string
 	Description   string
 	CategoryID    *uuid.UUID
 	FiscalPrice   *float64
@@ -111,7 +113,7 @@ func (s *ProductService) List(ctx context.Context, tenantID uuid.UUID, f Product
 
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, tenant_id, name, sku, barcode, description, category_id,
-		       is_fiscal, fiscal_price, internal_price, price_usd, tax_rate, active, image_url, created_at, updated_at
+		       is_fiscal, fiscal_price, internal_price, price_usd, tax_rate, active, image_url, created_at, updated_at, unit
 		FROM products
 		WHERE tenant_id = $1
 		  AND ($2::boolean IS NULL OR active = $2)
@@ -145,7 +147,7 @@ func (s *ProductService) List(ctx context.Context, tenantID uuid.UUID, f Product
 func (s *ProductService) Get(ctx context.Context, tenantID, id uuid.UUID) (*product.Product, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT id, tenant_id, name, sku, barcode, description, category_id,
-		       is_fiscal, fiscal_price, internal_price, price_usd, tax_rate, active, image_url, created_at, updated_at
+		       is_fiscal, fiscal_price, internal_price, price_usd, tax_rate, active, image_url, created_at, updated_at, unit
 		FROM products
 		WHERE id = $1 AND tenant_id = $2`,
 		id, tenantID,
@@ -174,6 +176,9 @@ func (s *ProductService) Create(ctx context.Context, tenantID uuid.UUID, req Cre
 		}
 		req.InternalPrice = &computed
 	}
+	if req.Unit == "" {
+		req.Unit = "unidad"
+	}
 
 	// Domain validation first — pure Go, no I/O.
 	p := &product.Product{
@@ -181,6 +186,7 @@ func (s *ProductService) Create(ctx context.Context, tenantID uuid.UUID, req Cre
 		Name:          req.Name,
 		SKU:           req.SKU,
 		Barcode:       req.Barcode,
+		Unit:          req.Unit,
 		Description:   req.Description,
 		CategoryID:    req.CategoryID,
 		IsFiscal:      req.IsFiscal,
@@ -209,10 +215,10 @@ func (s *ProductService) Create(ctx context.Context, tenantID uuid.UUID, req Cre
 	// Insert.
 	row := s.pool.QueryRow(ctx, `
 		INSERT INTO products (tenant_id, name, sku, barcode, description, category_id,
-		                      is_fiscal, fiscal_price, internal_price, price_usd, tax_rate)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		                      is_fiscal, fiscal_price, internal_price, price_usd, tax_rate, unit)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		RETURNING id, tenant_id, name, sku, barcode, description, category_id,
-		          is_fiscal, fiscal_price, internal_price, price_usd, tax_rate, active, image_url, created_at, updated_at`,
+		          is_fiscal, fiscal_price, internal_price, price_usd, tax_rate, active, image_url, created_at, updated_at, unit`,
 		tenantID,
 		nullableString(req.Name),
 		nullableString(req.SKU),
@@ -224,6 +230,7 @@ func (s *ProductService) Create(ctx context.Context, tenantID uuid.UUID, req Cre
 		req.InternalPrice,
 		req.PriceUSD,
 		req.TaxRate,
+		req.Unit,
 	)
 	created, err := scanProduct(row)
 	if err != nil {
@@ -246,17 +253,20 @@ func (s *ProductService) Update(ctx context.Context, tenantID, id uuid.UUID, req
 		req.InternalPrice = &computed
 	}
 
+	if req.Unit == "" {
+		req.Unit = "unidad"
+	}
 	row := s.pool.QueryRow(ctx, `
 		UPDATE products
 		SET name = $3, sku = $4, barcode = $5, description = $6, category_id = $7,
-		    fiscal_price = $8, internal_price = $9, price_usd = $10, tax_rate = $11, updated_at = NOW()
+		    fiscal_price = $8, internal_price = $9, price_usd = $10, tax_rate = $11, unit = $12, updated_at = NOW()
 		WHERE id = $1 AND tenant_id = $2
 		RETURNING id, tenant_id, name, sku, barcode, description, category_id,
-		          is_fiscal, fiscal_price, internal_price, price_usd, tax_rate, active, image_url, created_at, updated_at`,
+		          is_fiscal, fiscal_price, internal_price, price_usd, tax_rate, active, image_url, created_at, updated_at, unit`,
 		id, tenantID,
 		req.Name, nullableString(req.SKU), nullableString(req.Barcode),
 		nullableString(req.Description), req.CategoryID,
-		req.FiscalPrice, req.InternalPrice, req.PriceUSD, req.TaxRate,
+		req.FiscalPrice, req.InternalPrice, req.PriceUSD, req.TaxRate, req.Unit,
 	)
 	p, err := scanProduct(row)
 	if err != nil {
@@ -274,7 +284,7 @@ func (s *ProductService) Delete(ctx context.Context, tenantID, id uuid.UUID) (*p
 		UPDATE products SET active = FALSE, updated_at = NOW()
 		WHERE id = $1 AND tenant_id = $2
 		RETURNING id, tenant_id, name, sku, barcode, description, category_id,
-		          is_fiscal, fiscal_price, internal_price, price_usd, tax_rate, active, image_url, created_at, updated_at`,
+		          is_fiscal, fiscal_price, internal_price, price_usd, tax_rate, active, image_url, created_at, updated_at, unit`,
 		id, tenantID,
 	)
 	p, err := scanProduct(row)
@@ -370,7 +380,7 @@ func scanProduct(row interface {
 		&sku, &barcode, &description,
 		&p.CategoryID,
 		&p.IsFiscal, &p.FiscalPrice, &p.InternalPrice, &p.PriceUSD, &p.TaxRate,
-		&p.Active, &imageURL, &createdAt, &updatedAt,
+		&p.Active, &imageURL, &createdAt, &updatedAt, &p.Unit,
 	)
 	if err != nil {
 		return nil, err

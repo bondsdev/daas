@@ -46,6 +46,7 @@ type createProductRequest struct {
 	Name          string     `json:"name"`
 	SKU           string     `json:"sku,omitempty"`
 	Barcode       string     `json:"barcode,omitempty"`
+	Unit          string     `json:"unit,omitempty"`
 	Description   string     `json:"description,omitempty"`
 	CategoryID    *uuid.UUID `json:"category_id,omitempty"`
 	IsFiscal      bool       `json:"is_fiscal"`
@@ -59,6 +60,7 @@ type updateProductRequest struct {
 	Name          string     `json:"name"`
 	SKU           string     `json:"sku,omitempty"`
 	Barcode       string     `json:"barcode,omitempty"`
+	Unit          string     `json:"unit,omitempty"`
 	Description   string     `json:"description,omitempty"`
 	CategoryID    *uuid.UUID `json:"category_id,omitempty"`
 	FiscalPrice   *float64   `json:"fiscal_price,omitempty"`
@@ -78,6 +80,7 @@ type productResponse struct {
 	Name          string     `json:"name"`
 	SKU           string     `json:"sku,omitempty"`
 	Barcode       string     `json:"barcode,omitempty"`
+	Unit          string     `json:"unit,omitempty"`
 	Description   string     `json:"description,omitempty"`
 	CategoryID    *uuid.UUID `json:"category_id,omitempty"`
 	IsFiscal      bool       `json:"is_fiscal"`
@@ -113,6 +116,7 @@ func toProductResponse(p *product.Product) productResponse {
 		Name:          p.Name,
 		SKU:           p.SKU,
 		Barcode:       p.Barcode,
+		Unit:          p.Unit,
 		Description:   p.Description,
 		CategoryID:    p.CategoryID,
 		IsFiscal:      p.IsFiscal,
@@ -256,6 +260,7 @@ func (h *ProductHandler) CreateProduct(c echo.Context) error {
 		Name:          req.Name,
 		SKU:           req.SKU,
 		Barcode:       req.Barcode,
+		Unit:          req.Unit,
 		Description:   req.Description,
 		CategoryID:    req.CategoryID,
 		IsFiscal:      req.IsFiscal,
@@ -298,6 +303,7 @@ func (h *ProductHandler) UpdateProduct(c echo.Context) error {
 		Name:          req.Name,
 		SKU:           req.SKU,
 		Barcode:       req.Barcode,
+		Unit:          req.Unit,
 		Description:   req.Description,
 		CategoryID:    req.CategoryID,
 		FiscalPrice:   req.FiscalPrice,

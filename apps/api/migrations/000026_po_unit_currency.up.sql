@@ -1,0 +1,3 @@
+ALTER TABLE products ADD COLUMN unit VARCHAR(20) NOT NULL DEFAULT 'unidad';
+ALTER TABLE purchase_orders ADD COLUMN currency VARCHAR(3) NOT NULL DEFAULT 'VES' CHECK (currency IN ('VES','USD'));
+ALTER TABLE purchase_order_lines ADD COLUMN unit VARCHAR(20) NOT NULL DEFAULT 'unidad';

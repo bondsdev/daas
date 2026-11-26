@@ -2,7 +2,7 @@
 import {
   MapPin,
   Zap,
-  FolderOpen,
+  AlertTriangle,
   Loader2,
   CheckCircle2,
   Truck,
@@ -32,7 +32,10 @@ const props = defineProps<{
   markingId: string | null;
 }>();
 
-const emit = defineEmits<{ markDelivered: [orderId: string] }>();
+const emit = defineEmits<{
+  markDelivered: [orderId: string];
+  retry: [];
+}>();
 
 function fmtCurrency(n: number) {
   return new Intl.NumberFormat("es-VE", {
@@ -71,11 +74,16 @@ const hasMappableDeliveries = computed(() =>
     subtitle="Pedidos asignados"
     variant="brand"
   >
-    <div
-      v-if="loadError"
-      class="mx-4 mt-3 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive"
-    >
-      {{ loadError }}
+    <div v-if="loadError" class="px-6 py-20 text-center">
+      <AlertTriangle class="mx-auto mb-4 size-12 text-destructive/30" />
+      <p class="font-medium text-destructive">{{ loadError }}</p>
+      <button
+        type="button"
+        class="no-min-tap mt-4 h-10 rounded-xl border border-input px-5 text-sm font-semibold text-muted-foreground active:bg-accent"
+        @click="emit('retry')"
+      >
+        Reintentar
+      </button>
     </div>
 
     <div

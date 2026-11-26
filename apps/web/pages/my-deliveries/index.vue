@@ -17,8 +17,17 @@ async function load() {
   loadError.value = "";
   try {
     deliveries.value = await useApiFetch<MyDelivery[]>("/api/v1/my-deliveries");
-  } catch {
-    loadError.value = "No se pudieron cargar tus entregas.";
+  } catch (err: unknown) {
+    const e = err as { data?: { type?: string } };
+    if (e?.data?.type?.endsWith("rider-not-found")) {
+      // The logged-in user has the rider role but no row in `riders` yet —
+      // the owner must still register them from Motorizados. Different from
+      // "zero deliveries assigned", which never reaches this catch.
+      loadError.value =
+        "Tu cuenta todavía no está registrada como motorizado. Pedile al dueño del negocio que te agregue en Motorizados.";
+    } else {
+      loadError.value = "No se pudieron cargar tus entregas.";
+    }
   } finally {
     loading.value = false;
   }
@@ -49,6 +58,7 @@ onMounted(load);
       :load-error="loadError"
       :marking-id="markingId"
       @mark-delivered="markDelivered"
+      @retry="load"
     />
     <MobileRiderBottomNav />
   </div>

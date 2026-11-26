@@ -114,6 +114,75 @@ func TestCreatePORequest_Validate(t *testing.T) {
 	}
 }
 
+// ─── UpdatePORequest.Validate ─────────────────────────────────────────────────
+
+func TestUpdatePORequest_Validate(t *testing.T) {
+	supplierID := uuid.New()
+	productID := uuid.New()
+
+	validLine := supplier.CreatePOLineRequest{
+		ProductID:   productID,
+		Description: "Caja de bolígrafos",
+		Quantity:    10,
+		UnitCost:    2.5,
+	}
+
+	tests := []struct {
+		name    string
+		req     supplier.UpdatePORequest
+		wantErr bool
+	}{
+		{
+			name:    "valid update",
+			req:     supplier.UpdatePORequest{SupplierID: supplierID, Lines: []supplier.CreatePOLineRequest{validLine}},
+			wantErr: false,
+		},
+		{
+			name:    "missing supplier_id",
+			req:     supplier.UpdatePORequest{SupplierID: uuid.Nil, Lines: []supplier.CreatePOLineRequest{validLine}},
+			wantErr: true,
+		},
+		{
+			name:    "empty lines returns ErrEmptyPO",
+			req:     supplier.UpdatePORequest{SupplierID: supplierID, Lines: nil},
+			wantErr: true,
+		},
+		{
+			name: "invalid currency",
+			req: supplier.UpdatePORequest{
+				SupplierID: supplierID,
+				Currency:   "EUR",
+				Lines:      []supplier.CreatePOLineRequest{validLine},
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.req.Validate()
+			if (err != nil) != tc.wantErr {
+				t.Errorf("Validate() error = %v, wantErr = %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestUpdatePORequest_Validate_DefaultsCurrencyToVES(t *testing.T) {
+	req := supplier.UpdatePORequest{
+		SupplierID: uuid.New(),
+		Lines: []supplier.CreatePOLineRequest{
+			{ProductID: uuid.New(), Quantity: 1, UnitCost: 1},
+		},
+	}
+	if err := req.Validate(); err != nil {
+		t.Fatalf("Validate() unexpected error: %v", err)
+	}
+	if req.Currency != "VES" {
+		t.Errorf("Currency = %q, want default %q", req.Currency, "VES")
+	}
+}
+
 // ─── POStatus constants ───────────────────────────────────────────────────────
 
 func TestPOStatus_Values(t *testing.T) {

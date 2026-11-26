@@ -9,6 +9,7 @@ import {
   Loader2,
   FolderOpen,
   ChevronRight,
+  Pencil,
 } from "lucide-vue-next";
 import { Sheet, SheetHeader, SheetFooter } from "~/components/ui/sheet";
 import { Button } from "~/components/ui/button";
@@ -30,6 +31,7 @@ interface POLine {
   description: string;
   quantity_ordered: number;
   unit_cost: number;
+  unit: string;
   subtotal: number;
 }
 
@@ -38,16 +40,23 @@ export interface PurchaseOrder {
   supplier_id: string;
   status: "draft" | "ordered" | "received" | "cancelled";
   notes: string;
+  currency: "VES" | "USD";
   total: number;
   ordered_at: string | null;
   received_at: string | null;
   created_at: string;
   lines: POLine[];
   supplier?: Supplier;
+  supplier_invoice_number?: string;
+  supplier_invoice_date?: string | null;
+  supplier_invoice_tax_base?: number;
+  supplier_invoice_tax_amount?: number;
 }
 
 // ─── State ───────────────────────────────────────────────────────────────────
 const { isMobile } = useMobileMode();
+const route = useRoute();
+const router = useRouter();
 
 const orders = ref<PurchaseOrder[]>([]);
 const suppliers = ref<Supplier[]>([]);
@@ -66,11 +75,17 @@ interface FormLine {
   description: string;
   quantity: number;
   unit_cost: number;
+  unit: string;
 }
+
+// `editingId` is set when the sheet is editing an existing draft order
+// (PUT) instead of creating a new one (POST).
+const editingId = ref<string | null>(null);
 
 const form = reactive({
   supplier_id: "",
   notes: "",
+  currency: "VES" as "VES" | "USD",
   lines: [] as FormLine[],
 });
 
@@ -80,6 +95,7 @@ function addLine() {
     description: "",
     quantity: 1,
     unit_cost: 0,
+    unit: "",
   });
 }
 
@@ -91,6 +107,9 @@ function onProductChange(line: FormLine) {
   const product = products.value.find((p) => p.id === line.product_id);
   if (product && !line.description) {
     line.description = product.name;
+  }
+  if (product && !line.unit) {
+    line.unit = product.unit ?? "";
   }
 }
 
@@ -183,49 +202,81 @@ async function load() {
 }
 
 function openForm() {
+  editingId.value = null;
   form.supplier_id = "";
   form.notes = "";
+  form.currency = "VES";
   form.lines = [];
   addLine();
   saveError.value = "";
   formOpen.value = true;
 }
 
-async function createPO() {
+// Prefills the create-form sheet from an existing draft order and switches
+// submission to PUT (updatePO) instead of POST.
+function openEditForm(order: PurchaseOrder) {
+  editingId.value = order.id;
+  form.supplier_id = order.supplier_id;
+  form.notes = order.notes ?? "";
+  form.currency = order.currency ?? "VES";
+  form.lines = (order.lines ?? []).map((l) => ({
+    product_id: l.product_id,
+    description: l.description,
+    quantity: l.quantity_ordered,
+    unit_cost: l.unit_cost,
+    unit: l.unit ?? "",
+  }));
+  if (form.lines.length === 0) addLine();
+  saveError.value = "";
+  formOpen.value = true;
+}
+
+function validateForm(): boolean {
   if (!form.supplier_id) {
     saveError.value = "Seleccioná un proveedor";
-    return;
+    return false;
   }
   if (form.lines.length === 0) {
     saveError.value = "Agregá al menos una línea";
-    return;
+    return false;
   }
   for (const l of form.lines) {
     if (!l.product_id) {
       saveError.value = "Seleccioná un producto en cada línea";
-      return;
+      return false;
     }
     if (l.quantity <= 0 || l.unit_cost <= 0) {
       saveError.value = "Cantidad y costo deben ser mayores a 0";
-      return;
+      return false;
     }
   }
+  return true;
+}
+
+function buildPOBody() {
+  return {
+    supplier_id: form.supplier_id,
+    notes: form.notes,
+    currency: form.currency,
+    lines: form.lines.map((l) => ({
+      product_id: l.product_id,
+      description: l.description,
+      quantity: l.quantity,
+      unit_cost: l.unit_cost,
+      ...(l.unit ? { unit: l.unit } : {}),
+    })),
+  };
+}
+
+async function createPO() {
+  if (!validateForm()) return;
 
   saving.value = true;
   saveError.value = "";
   try {
     const po = await useApiFetch<PurchaseOrder>("/api/v1/purchase-orders", {
       method: "POST",
-      body: {
-        supplier_id: form.supplier_id,
-        notes: form.notes,
-        lines: form.lines.map((l) => ({
-          product_id: l.product_id,
-          description: l.description,
-          quantity: l.quantity,
-          unit_cost: l.unit_cost,
-        })),
-      },
+      body: buildPOBody(),
     });
     orders.value.unshift(po);
     formOpen.value = false;
@@ -237,7 +288,48 @@ async function createPO() {
   }
 }
 
-onMounted(load);
+async function updatePO() {
+  if (!editingId.value || !validateForm()) return;
+
+  saving.value = true;
+  saveError.value = "";
+  try {
+    const po = await useApiFetch<PurchaseOrder>(
+      `/api/v1/purchase-orders/${editingId.value}`,
+      {
+        method: "PUT",
+        body: buildPOBody(),
+      },
+    );
+    const idx = orders.value.findIndex((o) => o.id === po.id);
+    if (idx !== -1) {
+      orders.value[idx] = po;
+    } else {
+      orders.value.unshift(po);
+    }
+    formOpen.value = false;
+  } catch (err: unknown) {
+    const e = err as { data?: { detail?: string } };
+    saveError.value = e?.data?.detail ?? "Error al actualizar la orden";
+  } finally {
+    saving.value = false;
+  }
+}
+
+function submitForm() {
+  return editingId.value ? updatePO() : createPO();
+}
+
+onMounted(async () => {
+  await load();
+  // Deep-link from the detail page's "Editar" button (`?edit=<id>`).
+  const editId = route.query.edit;
+  if (typeof editId === "string") {
+    const target = orders.value.find((o) => o.id === editId);
+    if (target) openEditForm(target);
+    router.replace({ query: { ...route.query, edit: undefined } });
+  }
+});
 </script>
 
 <template>
@@ -421,15 +513,27 @@ onMounted(load);
               <td
                 class="px-4 py-3 text-right font-mono font-medium text-foreground"
               >
-                {{ fmtCurrency(po.total) }}
+                {{ fmtCurrency(po.total) }} {{ po.currency ?? "VES" }}
               </td>
               <td class="px-4 py-3 text-right">
-                <NuxtLink
-                  :to="`/suppliers/purchase-orders/${po.id}`"
-                  class="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg hover:bg-muted transition-all text-muted-foreground inline-flex"
+                <div
+                  class="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-all"
                 >
-                  <ChevronRight class="w-4 h-4" />
-                </NuxtLink>
+                  <button
+                    v-if="po.status === 'draft'"
+                    class="p-1.5 rounded-lg hover:bg-muted transition-all text-muted-foreground inline-flex"
+                    title="Editar orden"
+                    @click="openEditForm(po)"
+                  >
+                    <Pencil class="w-4 h-4" />
+                  </button>
+                  <NuxtLink
+                    :to="`/suppliers/purchase-orders/${po.id}`"
+                    class="p-1.5 rounded-lg hover:bg-muted transition-all text-muted-foreground inline-flex"
+                  >
+                    <ChevronRight class="w-4 h-4" />
+                  </NuxtLink>
+                </div>
               </td>
             </tr>
           </tbody>
@@ -446,7 +550,9 @@ onMounted(load);
           </div>
           <div>
             <h2 class="text-base font-semibold text-foreground">
-              Nueva orden de compra
+              {{
+                editingId ? "Editar orden de compra" : "Nueva orden de compra"
+              }}
             </h2>
             <p class="text-xs text-muted-foreground mt-0.5">
               Completá los datos del pedido al proveedor
@@ -470,20 +576,32 @@ onMounted(load);
           {{ saveError }}
         </div>
 
-        <!-- Supplier -->
-        <div class="space-y-1.5">
-          <label class="text-sm font-medium text-foreground"
-            >Proveedor <span class="text-red-500">*</span></label
-          >
-          <select
-            v-model="form.supplier_id"
-            class="w-full h-11 px-3 border border-input bg-white rounded-lg text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
-          >
-            <option value="">Seleccionar proveedor...</option>
-            <option v-for="sup in suppliers" :key="sup.id" :value="sup.id">
-              {{ sup.name }}
-            </option>
-          </select>
+        <!-- Supplier + currency -->
+        <div class="grid grid-cols-3 gap-3">
+          <div class="col-span-2 space-y-1.5">
+            <label class="text-sm font-medium text-foreground"
+              >Proveedor <span class="text-red-500">*</span></label
+            >
+            <select
+              v-model="form.supplier_id"
+              class="w-full h-11 px-3 border border-input bg-white rounded-lg text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+            >
+              <option value="">Seleccionar proveedor...</option>
+              <option v-for="sup in suppliers" :key="sup.id" :value="sup.id">
+                {{ sup.name }}
+              </option>
+            </select>
+          </div>
+          <div class="space-y-1.5">
+            <label class="text-sm font-medium text-foreground">Moneda</label>
+            <select
+              v-model="form.currency"
+              class="w-full h-11 px-3 border border-input bg-white rounded-lg text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+            >
+              <option value="VES">VES</option>
+              <option value="USD">USD</option>
+            </select>
+          </div>
         </div>
 
         <!-- Notes -->
@@ -560,7 +678,7 @@ onMounted(load);
               />
             </div>
 
-            <div class="grid grid-cols-2 gap-3">
+            <div class="grid grid-cols-3 gap-3">
               <div class="space-y-1.5">
                 <label class="text-xs font-medium text-muted-foreground"
                   >Cantidad</label
@@ -572,6 +690,12 @@ onMounted(load);
                   step="any"
                   class="h-9"
                 />
+              </div>
+              <div class="space-y-1.5">
+                <label class="text-xs font-medium text-muted-foreground"
+                  >Unidad</label
+                >
+                <Input v-model="line.unit" class="h-9" placeholder="unidad" />
               </div>
               <div class="space-y-1.5">
                 <label class="text-xs font-medium text-muted-foreground"
@@ -589,9 +713,10 @@ onMounted(load);
 
             <div class="text-right text-xs text-muted-foreground">
               Subtotal:
-              <span class="font-mono font-medium text-foreground">{{
-                fmtCurrency(line.quantity * line.unit_cost)
-              }}</span>
+              <span class="font-mono font-medium text-foreground"
+                >{{ fmtCurrency(line.quantity * line.unit_cost) }}
+                {{ form.currency }}</span
+              >
             </div>
           </div>
 
@@ -601,19 +726,27 @@ onMounted(load);
             class="flex items-center justify-between px-4 py-3 bg-primary/5 rounded-lg border border-primary/20"
           >
             <span class="text-sm font-medium text-foreground">Total</span>
-            <span class="font-mono font-bold text-primary text-lg">{{
-              fmtCurrency(formTotal)
-            }}</span>
+            <span class="font-mono font-bold text-primary text-lg"
+              >{{ fmtCurrency(formTotal) }} {{ form.currency }}</span
+            >
           </div>
         </div>
       </div>
 
       <SheetFooter>
         <Button variant="outline" @click="formOpen = false">Cancelar</Button>
-        <Button :disabled="saving" @click="createPO">
+        <Button :disabled="saving" @click="submitForm">
           <Loader2 v-if="saving" class="w-4 h-4 animate-spin" />
           <Save v-else class="w-4 h-4" />
-          {{ saving ? "Creando..." : "Crear orden" }}
+          {{
+            saving
+              ? editingId
+                ? "Guardando..."
+                : "Creando..."
+              : editingId
+                ? "Guardar cambios"
+                : "Crear orden"
+          }}
         </Button>
       </SheetFooter>
     </Sheet>

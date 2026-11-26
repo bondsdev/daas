@@ -383,14 +383,14 @@ func (s *SupplierService) CreatePO(ctx context.Context, tenantID uuid.UUID, crea
 	if _, err := s.GetSupplier(ctx, tenantID, req.SupplierID); err != nil {
 		return nil, err
 	}
-	// Resolve product descriptions + compute total
+	// Resolve product descriptions/units + compute total
 	var total float64
 	for i, line := range req.Lines {
-		var name string
+		var name, productUnit string
 		err := s.pool.QueryRow(ctx,
-			`SELECT name FROM products WHERE id=$1 AND tenant_id=$2 AND active=true`,
+			`SELECT name, unit FROM products WHERE id=$1 AND tenant_id=$2 AND active=true`,
 			line.ProductID, tenantID,
-		).Scan(&name)
+		).Scan(&name, &productUnit)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return nil, fmt.Errorf("product %s not found or inactive", line.ProductID)
@@ -399,6 +399,9 @@ func (s *SupplierService) CreatePO(ctx context.Context, tenantID uuid.UUID, crea
 		}
 		if req.Lines[i].Description == "" {
 			req.Lines[i].Description = name
+		}
+		if req.Lines[i].Unit == "" {
+			req.Lines[i].Unit = productUnit
 		}
 		total += line.Quantity * line.UnitCost
 	}
@@ -415,15 +418,16 @@ func (s *SupplierService) CreatePO(ctx context.Context, tenantID uuid.UUID, crea
 		SupplierID: req.SupplierID,
 		Status:     supplier.POStatusDraft,
 		Notes:      req.Notes,
+		Currency:   req.Currency,
 		Total:      total,
 		CreatedBy:  createdBy,
 		CreatedAt:  time.Now().UTC(),
 		UpdatedAt:  time.Now().UTC(),
 	}
 	_, err = tx.Exec(ctx,
-		`INSERT INTO purchase_orders (id, tenant_id, supplier_id, notes, total, created_by)
-		 VALUES ($1,$2,$3,$4,$5,$6)`,
-		po.ID, po.TenantID, po.SupplierID, po.Notes, po.Total, po.CreatedBy,
+		`INSERT INTO purchase_orders (id, tenant_id, supplier_id, notes, total, created_by, currency)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+		po.ID, po.TenantID, po.SupplierID, po.Notes, po.Total, po.CreatedBy, po.Currency,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("insert po: %w", err)
@@ -432,9 +436,9 @@ func (s *SupplierService) CreatePO(ctx context.Context, tenantID uuid.UUID, crea
 		lineID := uuid.New()
 		sub := line.Quantity * line.UnitCost
 		_, err = tx.Exec(ctx,
-			`INSERT INTO purchase_order_lines (id, po_id, product_id, description, quantity_ordered, unit_cost, subtotal, sort_order)
-			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-			lineID, po.ID, line.ProductID, req.Lines[i].Description, line.Quantity, line.UnitCost, sub, i,
+			`INSERT INTO purchase_order_lines (id, po_id, product_id, description, quantity_ordered, unit_cost, subtotal, sort_order, unit)
+			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+			lineID, po.ID, line.ProductID, req.Lines[i].Description, line.Quantity, line.UnitCost, sub, i, req.Lines[i].Unit,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("insert po line: %w", err)
@@ -442,7 +446,7 @@ func (s *SupplierService) CreatePO(ctx context.Context, tenantID uuid.UUID, crea
 		po.Lines = append(po.Lines, supplier.POLine{
 			ID: lineID, POID: po.ID, ProductID: line.ProductID,
 			Description: req.Lines[i].Description, QuantityOrdered: line.Quantity,
-			UnitCost: line.UnitCost, Subtotal: sub, SortOrder: i,
+			UnitCost: line.UnitCost, Subtotal: sub, SortOrder: i, Unit: req.Lines[i].Unit,
 		})
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -451,9 +455,87 @@ func (s *SupplierService) CreatePO(ctx context.Context, tenantID uuid.UUID, crea
 	return po, nil
 }
 
+// UpdatePO replaces a draft purchase order's supplier, notes, currency and
+// lines in place. Only draft POs may be edited; any other status returns
+// ErrPONotDraft.
+func (s *SupplierService) UpdatePO(ctx context.Context, tenantID, poID uuid.UUID, req supplier.UpdatePORequest) (*supplier.PurchaseOrder, error) {
+	if err := req.Validate(); err != nil {
+		return nil, err
+	}
+	po, err := s.GetPO(ctx, tenantID, poID)
+	if err != nil {
+		return nil, err
+	}
+	if po.Status != supplier.POStatusDraft {
+		return nil, supplier.ErrPONotDraft
+	}
+	// Verify the (possibly new) supplier belongs to the tenant.
+	if _, err := s.GetSupplier(ctx, tenantID, req.SupplierID); err != nil {
+		return nil, err
+	}
+
+	// Resolve product descriptions/units + compute total.
+	var total float64
+	for i, line := range req.Lines {
+		var name, productUnit string
+		err := s.pool.QueryRow(ctx,
+			`SELECT name, unit FROM products WHERE id=$1 AND tenant_id=$2 AND active=true`,
+			line.ProductID, tenantID,
+		).Scan(&name, &productUnit)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil, fmt.Errorf("product %s not found or inactive", line.ProductID)
+			}
+			return nil, fmt.Errorf("lookup product: %w", err)
+		}
+		if req.Lines[i].Description == "" {
+			req.Lines[i].Description = name
+		}
+		if req.Lines[i].Unit == "" {
+			req.Lines[i].Unit = productUnit
+		}
+		total += line.Quantity * line.UnitCost
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	_, err = tx.Exec(ctx,
+		`UPDATE purchase_orders SET supplier_id=$2, notes=$3, currency=$4, total=$5, updated_at=NOW() WHERE id=$1`,
+		poID, req.SupplierID, req.Notes, req.Currency, total,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("update po: %w", err)
+	}
+	_, err = tx.Exec(ctx, `DELETE FROM purchase_order_lines WHERE po_id=$1`, poID)
+	if err != nil {
+		return nil, fmt.Errorf("delete po lines: %w", err)
+	}
+	for i, line := range req.Lines {
+		lineID := uuid.New()
+		sub := line.Quantity * line.UnitCost
+		_, err = tx.Exec(ctx,
+			`INSERT INTO purchase_order_lines (id, po_id, product_id, description, quantity_ordered, unit_cost, subtotal, sort_order, unit)
+			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+			lineID, poID, line.ProductID, req.Lines[i].Description, line.Quantity, line.UnitCost, sub, i, req.Lines[i].Unit,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("insert po line: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit: %w", err)
+	}
+	return s.GetPO(ctx, tenantID, poID)
+}
+
 func (s *SupplierService) ListPOs(ctx context.Context, tenantID uuid.UUID, supplierID *uuid.UUID, status *supplier.POStatus) ([]*supplier.PurchaseOrder, error) {
 	query := `SELECT id, tenant_id, supplier_id, status, COALESCE(notes,''), total, ordered_at, received_at, created_by, created_at, updated_at,
-	                 COALESCE(supplier_invoice_number,''), supplier_invoice_date, COALESCE(supplier_invoice_tax_base,0), COALESCE(supplier_invoice_tax_amount,0)
+	                 COALESCE(supplier_invoice_number,''), supplier_invoice_date, COALESCE(supplier_invoice_tax_base,0), COALESCE(supplier_invoice_tax_amount,0),
+	                 currency
 	          FROM purchase_orders WHERE tenant_id=$1`
 	args := []any{tenantID}
 	idx := 2
@@ -519,7 +601,8 @@ func (s *SupplierService) ListPOs(ctx context.Context, tenantID uuid.UUID, suppl
 func (s *SupplierService) GetPO(ctx context.Context, tenantID, poID uuid.UUID) (*supplier.PurchaseOrder, error) {
 	po, err := scanPO(s.pool.QueryRow(ctx,
 		`SELECT id, tenant_id, supplier_id, status, COALESCE(notes,''), total, ordered_at, received_at, created_by, created_at, updated_at,
-		        COALESCE(supplier_invoice_number,''), supplier_invoice_date, COALESCE(supplier_invoice_tax_base,0), COALESCE(supplier_invoice_tax_amount,0)
+		        COALESCE(supplier_invoice_number,''), supplier_invoice_date, COALESCE(supplier_invoice_tax_base,0), COALESCE(supplier_invoice_tax_amount,0),
+		        currency
 		 FROM purchase_orders WHERE id=$1 AND tenant_id=$2`,
 		poID, tenantID,
 	))
@@ -706,7 +789,7 @@ func (s *SupplierService) resolveSupplierUserID(ctx context.Context, tenantID uu
 
 func (s *SupplierService) loadPOLines(ctx context.Context, poID uuid.UUID) ([]supplier.POLine, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, po_id, product_id, description, quantity_ordered, unit_cost, subtotal, sort_order
+		`SELECT id, po_id, product_id, description, quantity_ordered, unit_cost, subtotal, sort_order, unit
 		 FROM purchase_order_lines WHERE po_id=$1 ORDER BY sort_order`,
 		poID,
 	)
@@ -718,7 +801,7 @@ func (s *SupplierService) loadPOLines(ctx context.Context, poID uuid.UUID) ([]su
 	for rows.Next() {
 		var l supplier.POLine
 		if err := rows.Scan(&l.ID, &l.POID, &l.ProductID, &l.Description,
-			&l.QuantityOrdered, &l.UnitCost, &l.Subtotal, &l.SortOrder); err != nil {
+			&l.QuantityOrdered, &l.UnitCost, &l.Subtotal, &l.SortOrder, &l.Unit); err != nil {
 			return nil, fmt.Errorf("scan po line: %w", err)
 		}
 		lines = append(lines, l)
@@ -749,6 +832,7 @@ func scanPO(row supplierScanner) (*supplier.PurchaseOrder, error) {
 		&po.OrderedAt, &po.ReceivedAt, &po.CreatedBy, &po.CreatedAt, &po.UpdatedAt,
 		&po.SupplierInvoiceNumber, &po.SupplierInvoiceDate,
 		&po.SupplierInvoiceTaxBase, &po.SupplierInvoiceTaxAmount,
+		&po.Currency,
 	); err != nil {
 		return nil, err
 	}

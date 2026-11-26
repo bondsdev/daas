@@ -360,6 +360,7 @@ func registerRoutes(
 	api.GET("/purchase-orders", supplierHandler.ListPOs)
 	api.POST("/purchase-orders", supplierHandler.CreatePO)
 	api.GET("/purchase-orders/:id", supplierHandler.GetPO)
+	api.PUT("/purchase-orders/:id", supplierHandler.UpdatePO)
 	api.POST("/purchase-orders/:id/order", supplierHandler.OrderPO)
 	api.POST("/purchase-orders/:id/receive", supplierHandler.ReceivePO)
 	api.POST("/purchase-orders/:id/cancel", supplierHandler.CancelPO)

@@ -115,6 +115,7 @@ type PurchaseOrder struct {
 	SupplierID uuid.UUID  `json:"supplier_id"`
 	Status     POStatus   `json:"status"`
 	Notes      string     `json:"notes"`
+	Currency   string     `json:"currency"`
 	Total      float64    `json:"total"`
 	OrderedAt  *time.Time `json:"ordered_at"`
 	ReceivedAt *time.Time `json:"received_at"`
@@ -160,6 +161,7 @@ type POLine struct {
 	UnitCost        float64   `json:"unit_cost"`
 	Subtotal        float64   `json:"subtotal"`
 	SortOrder       int       `json:"sort_order"`
+	Unit            string    `json:"unit"`
 }
 
 // CreatePOLineRequest is the input for one purchase order line.
@@ -168,12 +170,15 @@ type CreatePOLineRequest struct {
 	Description string
 	Quantity    float64
 	UnitCost    float64
+	// Unit is optional — empty means "use the product's own unit".
+	Unit string
 }
 
 // CreatePORequest is the full purchase order creation payload.
 type CreatePORequest struct {
 	SupplierID uuid.UUID
 	Notes      string
+	Currency   string
 	Lines      []CreatePOLineRequest
 }
 
@@ -191,6 +196,43 @@ func (r *CreatePORequest) Validate() error {
 		if l.UnitCost <= 0 {
 			return fmt.Errorf("unit_cost must be positive")
 		}
+	}
+	if r.Currency == "" {
+		r.Currency = "VES"
+	} else if r.Currency != "VES" && r.Currency != "USD" {
+		return fmt.Errorf("currency must be VES or USD")
+	}
+	return nil
+}
+
+// UpdatePORequest is the full purchase order update payload. It mirrors
+// CreatePORequest and follows the same validation rules.
+type UpdatePORequest struct {
+	SupplierID uuid.UUID
+	Notes      string
+	Currency   string
+	Lines      []CreatePOLineRequest
+}
+
+func (r *UpdatePORequest) Validate() error {
+	if r.SupplierID == uuid.Nil {
+		return fmt.Errorf("supplier_id is required")
+	}
+	if len(r.Lines) == 0 {
+		return ErrEmptyPO
+	}
+	for _, l := range r.Lines {
+		if l.Quantity <= 0 {
+			return fmt.Errorf("quantity must be positive")
+		}
+		if l.UnitCost <= 0 {
+			return fmt.Errorf("unit_cost must be positive")
+		}
+	}
+	if r.Currency == "" {
+		r.Currency = "VES"
+	} else if r.Currency != "VES" && r.Currency != "USD" {
+		return fmt.Errorf("currency must be VES or USD")
 	}
 	return nil
 }

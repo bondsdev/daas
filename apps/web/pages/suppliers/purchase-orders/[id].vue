@@ -24,6 +24,7 @@ interface POLine {
   description: string;
   quantity_ordered: number;
   unit_cost: number;
+  unit: string;
   subtotal: number;
   sort_order: number;
 }
@@ -42,6 +43,7 @@ interface PurchaseOrder {
   supplier_id: string;
   status: "draft" | "ordered" | "received" | "cancelled";
   notes: string;
+  currency: "VES" | "USD";
   total: number;
   ordered_at: string | null;
   received_at: string | null;
@@ -104,12 +106,40 @@ function fmtDate(d: string | null) {
   });
 }
 
+// For date-only fields (e.g. "2026-11-20", no time component). Parsing those
+// through `new Date(str)` reads them as UTC midnight, which displays as the
+// previous day in negative-UTC-offset zones (Venezuela, UTC-4). Building the
+// Date from the split components uses the local-time constructor instead.
+function fmtDateOnly(d: string | null | undefined) {
+  if (!d) return "—";
+  const [y, m, day] = d.slice(0, 10).split("-").map(Number);
+  return new Date(y, m - 1, day).toLocaleDateString("es-VE", {
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+  });
+}
+
 function fmtCurrency(n: number) {
   return new Intl.NumberFormat("es-VE", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(n);
 }
+
+// Discrepancy trace (point 5): the PO total is frozen at creation and never
+// auto-corrected. When an invoice is later recorded with a different amount,
+// surface it as a display-only warning instead of silently losing the gap.
+const invoiceRecorded = computed(() => !!po.value?.supplier_invoice_number);
+const invoiceTotal_ = computed(
+  () =>
+    Number(po.value?.supplier_invoice_tax_base ?? 0) +
+    Number(po.value?.supplier_invoice_tax_amount ?? 0),
+);
+const invoiceDiscrepancy = computed(() => {
+  if (!po.value || !invoiceRecorded.value) return 0;
+  return invoiceTotal_.value - po.value.total;
+});
 
 async function load() {
   loading.value = true;
@@ -286,12 +316,42 @@ onMounted(load);
           </div>
           <div class="text-right">
             <p class="text-3xl font-bold text-foreground font-mono">
-              {{ fmtCurrency(po.total) }}
+              {{ fmtCurrency(po.total) }} {{ po.currency ?? "VES" }}
             </p>
             <p class="text-sm text-muted-foreground mt-0.5">
               Total de la orden
             </p>
           </div>
+        </div>
+
+        <!-- Edit (draft only) -->
+        <div v-if="po.status === 'draft'">
+          <NuxtLink
+            :to="`/suppliers/purchase-orders?edit=${po.id}`"
+            class="inline-flex items-center gap-1.5 text-sm text-primary hover:underline"
+          >
+            <Pencil class="w-3.5 h-3.5" /> Editar orden
+          </NuxtLink>
+        </div>
+
+        <!-- Discrepancy trace (point 5): PO total is never auto-corrected —
+             this is a display-only alert when the recorded invoice differs. -->
+        <div
+          v-if="invoiceRecorded && invoiceDiscrepancy !== 0"
+          class="flex items-start gap-2 p-3 rounded-lg border border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-400 text-sm"
+        >
+          <AlertTriangle class="w-4 h-4 shrink-0 mt-0.5" />
+          <span>
+            Hay un desvío entre la orden ({{ fmtCurrency(po.total) }}
+            {{ po.currency ?? "VES" }}) y la factura registrada ({{
+              fmtCurrency(invoiceTotal_)
+            }}
+            {{ po.currency ?? "VES" }}):
+            <strong
+              >{{ invoiceDiscrepancy > 0 ? "+" : ""
+              }}{{ fmtCurrency(invoiceDiscrepancy) }}</strong
+            >. El total original de la orden no se modifica automáticamente.
+          </span>
         </div>
 
         <!-- Dates -->
@@ -439,7 +499,7 @@ onMounted(load);
             <div>
               <p class="text-xs text-muted-foreground">Fecha</p>
               <p class="font-medium text-foreground">
-                {{ fmtDate(po.supplier_invoice_date) }}
+                {{ fmtDateOnly(po.supplier_invoice_date) }}
               </p>
             </div>
             <div>
@@ -604,7 +664,7 @@ onMounted(load);
                 <td
                   class="px-4 py-3 text-right font-mono text-muted-foreground"
                 >
-                  {{ line.quantity_ordered }}
+                  {{ line.quantity_ordered }} {{ line.unit }}
                 </td>
                 <td
                   class="px-4 py-3 text-right font-mono text-muted-foreground hidden md:table-cell"
@@ -629,7 +689,7 @@ onMounted(load);
                 <td
                   class="px-4 py-3 text-right font-mono font-bold text-lg text-foreground"
                 >
-                  {{ fmtCurrency(po.total) }}
+                  {{ fmtCurrency(po.total) }} {{ po.currency ?? "VES" }}
                 </td>
               </tr>
             </tfoot>

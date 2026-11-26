@@ -408,7 +408,7 @@ func (s *ProductService) SetImageURL(ctx context.Context, tenantID, id uuid.UUID
 		UPDATE products SET image_url = $3, updated_at = NOW()
 		WHERE id = $1 AND tenant_id = $2
 		RETURNING id, tenant_id, name, sku, barcode, description, category_id,
-		          is_fiscal, fiscal_price, internal_price, price_usd, tax_rate, active, image_url, created_at, updated_at`,
+		          is_fiscal, fiscal_price, internal_price, price_usd, tax_rate, active, image_url, created_at, updated_at, unit`,
 		id, tenantID, imageURL,
 	)
 	p, err := scanProduct(row)
@@ -427,7 +427,7 @@ func (s *ProductService) ClearImageURL(ctx context.Context, tenantID, id uuid.UU
 		UPDATE products SET image_url = NULL, updated_at = NOW()
 		WHERE id = $1 AND tenant_id = $2
 		RETURNING id, tenant_id, name, sku, barcode, description, category_id,
-		          is_fiscal, fiscal_price, internal_price, price_usd, tax_rate, active, image_url, created_at, updated_at`,
+		          is_fiscal, fiscal_price, internal_price, price_usd, tax_rate, active, image_url, created_at, updated_at, unit`,
 		id, tenantID,
 	)
 	p, err := scanProduct(row)

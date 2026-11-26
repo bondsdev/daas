@@ -62,7 +62,10 @@ const taxRate = ref<string>("");
 // True when the USD price field holds a valid, positive value — in that
 // case internal_price is a system-computed value (BCV rate), not editable.
 const usdPriceActive = computed(() => {
-  const trimmed = priceUsd.value.trim();
+  // priceUsd is bound to a native <input type="number">, which makes Vue
+  // auto-apply the `.number` v-model modifier — the value can be a number,
+  // not the string the ref type promises. Coerce before string methods.
+  const trimmed = String(priceUsd.value ?? "").trim();
   if (!trimmed) return false;
   const n = parseFloat(trimmed);
   return !isNaN(n) && n > 0;
@@ -158,7 +161,7 @@ function validate(): boolean {
       errs.taxRate = "Selecciona la tasa de IVA";
     }
   } else {
-    const usdRaw = priceUsd.value.trim();
+    const usdRaw = String(priceUsd.value ?? "").trim();
     if (usdRaw) {
       const usd = parseFloat(usdRaw);
       if (isNaN(usd) || usd <= 0) {
@@ -246,7 +249,7 @@ async function handleSave() {
       body.fiscal_price = parseFloat(fiscalPrice.value);
       body.tax_rate = parseFloat(taxRate.value);
     } else {
-      const usdRaw = priceUsd.value.trim();
+      const usdRaw = String(priceUsd.value ?? "").trim();
       if (usdRaw) {
         // internal_price is computed server-side from price_usd and the
         // tenant's current BCV rate — omit it so the backend's calculated
